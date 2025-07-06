@@ -91,13 +91,13 @@ def transform_function_body(lines, start_idx, class_name, func_name, param_names
 
     # check_all block
     if return_type != 'void':
-        new_body.append(indent + f'if (!check_all({", ".join(param_names)}))\n')
+        new_body.append(indent + f'if (!check_all("{class_name}::{func_name}", {", ".join(param_names)}))\n')
         new_body.append(indent + '{\n')
         new_body.append(indent*2 + f'std::cerr << "Invalid parameters in {class_name}::{func_name} !  See parameter_check.log for details" << std::endl;\n')
         new_body.append(indent*2 + f'return {fallback};\n')
         new_body.append(indent + '}\n')
     else:
-        new_body.append(indent + f'if (!check_all({", ".join(param_names)}))\n')
+        new_body.append(indent + f'if (!check_all("{class_name}::{func_name}", {", ".join(param_names)}))\n')
         new_body.append(indent + '{\n')
         new_body.append(indent*2 + 'std::cerr << "Invalid parameters!" << std::endl;\n')
         new_body.append(indent*2 + 'return;\n')
