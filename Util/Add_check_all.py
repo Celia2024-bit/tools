@@ -1,6 +1,7 @@
 import yaml
 import re
 import os
+import sys
 
 def load_config(yaml_path):
     """Load YAML configuration file."""
@@ -177,25 +178,34 @@ def main():
     - Load YAML config
     - For each cpp file, process according to configured functions
     """
-    if not os.path.exists('Config.yaml'):
-        print("Config.yaml not found. Nothing to do.")
+    if len(sys.argv) < 2:
+        print("Usage: python script.py <directory-containing-cpp-and-yaml>")
         return
-        
-    config = load_config('Config.yaml')
+
+    search_folder = os.path.abspath(sys.argv[1])
+    config_path = os.path.join(search_folder, "Config.yaml")
+
+    if not os.path.exists(config_path):
+        print(f"Config.yaml not found in: {search_folder}")
+        return
+
+    config = load_config(config_path)
     if not config:
-        print("Config.yaml is empty or invalid. Nothing to do.")
+        print("Config.yaml is empty or malformed. Nothing to do.")
         return
 
     any_file_processed = False
 
-    for cpp_file, func_sigs in config.items():
-        if not os.path.exists(cpp_file):
-            print(f"{cpp_file} not found, skipping.")
+    for rel_path, func_sigs in config.items():
+        abs_path = os.path.join(search_folder, rel_path)
+        if not os.path.exists(abs_path):
+            print(f"Skipping missing file: {abs_path}")
             continue
+        process_file(abs_path, func_sigs)
         any_file_processed = True
-        process_file(cpp_file, func_sigs)
+
     if not any_file_processed:
-        print("No valid files found in Config.yaml. Exiting without processing.")
+        print("No valid source files found. Exiting.")
 
 if __name__ == "__main__":
     main()
