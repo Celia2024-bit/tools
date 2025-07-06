@@ -25,36 +25,111 @@ def parse_signature(sig):
     param_names = [p.strip() for p in params.split(',') if p.strip()]
     return class_name, func_name, param_names
 
-def has_check_all(lines, start_idx):
-    """
-    Check if 'check_all' call exists within the next few lines after the opening brace.
-    This avoids duplicate insertion. We'll look specifically after the brace.
-    """
-    # Look for check_all within a reasonable range after the insertion point
-    for i in range(start_idx, min(start_idx + 5, len(lines))):
-        if 'check_all' in lines[i]:
+def has_safety_wrapper(lines, start_idx):
+    keywords = ['check_all', 'try', 'catch']
+    for i in range(start_idx, min(start_idx + 10, len(lines))):
+        line = lines[i]
+        if any(kw in line for kw in keywords):
             return True
     return False
 
-def generate_check_all_call(func_name, param_names):
-    """
-    Generate the check_all call string.
-    If no parameters, return empty string (no call).
-    Format: check_all("FunctionName", param1, param2, ...);
-    """
-    if not param_names:
-        return ''
-    return '    check_all("{}", {});\n'.format(func_name, ", ".join(param_names))
+def get_fallback_value(return_type):
+    fallback_map = {
+        'bool': 'false',
+        'int': '0',
+        'double': '0.0',
+        'float': '0.0f',
+        'std::string': '""',
+        'ActionType': 'ActionType::HOLD',
+        'void': ''
+    }
+    return fallback_map.get(return_type.strip(), '/* TODO: fallback */')
+
+def extract_return_type(line, class_name, func_name):
+    m = re.search(r'([\w:<>]+)\s+' + re.escape(class_name) + r'::' + re.escape(func_name) + r'\s*\(', line)
+    return m.group(1) if m else 'void'
+
+def insert_errorlogger_include(lines):
+    if any('ErrorLogger.h' in line for line in lines):
+        return lines  # already included
+    for i, line in enumerate(lines):
+        if line.strip().startswith('#include'):
+            lines.insert(i, '#include "ErrorLogger.h"\n')
+            break
+    return lines
+
+def transform_function_body(lines, start_idx, class_name, func_name, param_names, return_type):
+    open_braces = 0
+    body_lines = []
+    i = start_idx
+    while i < len(lines):
+        line = lines[i]
+        open_braces += line.count('{')
+        open_braces -= line.count('}')
+        body_lines.append(line)
+        if open_braces == 0:
+            break
+        i += 1
+
+    indent = '    '
+    content = body_lines[1:-1]
+    fallback = get_fallback_value(return_type)
+
+    if not param_names or has_safety_wrapper(content, 0):
+        return body_lines, i + 1
+
+    for raw_line in content:
+        if raw_line.strip():
+            base_indent = re.match(r'^(\s*)', raw_line).group(1)
+            break
+    else:
+        base_indent = indent
+
+    new_body = [body_lines[0]]
+
+    # check_all block
+    if return_type != 'void':
+        new_body.append(indent + f'if (!check_all({", ".join(param_names)}))\n')
+        new_body.append(indent + '{\n')
+        new_body.append(indent*2 + f'std::cerr << "Invalid parameters in {class_name}::{func_name} !  See parameter_check.log for details" << std::endl;\n')
+        new_body.append(indent*2 + f'return {fallback};\n')
+        new_body.append(indent + '}\n')
+    else:
+        new_body.append(indent + f'if (!check_all({", ".join(param_names)}))\n')
+        new_body.append(indent + '{\n')
+        new_body.append(indent*2 + 'std::cerr << "Invalid parameters!" << std::endl;\n')
+        new_body.append(indent*2 + 'return;\n')
+        new_body.append(indent + '}\n')
+
+    # try-catch block
+    new_body.append(indent + 'try\n')
+    new_body.append(indent + '{\n')
+    for line in content:
+        new_body.append(indent + line if line.strip() else '\n')
+    new_body.append(indent + '}\n')
+    new_body.append(indent + 'catch (const std::exception& e)\n')
+    new_body.append(indent + '{\n')
+    new_body.append(indent*2 + f'ErrorLogger::LogError("{class_name}", "{func_name}", "std::exception", e.what());\n')
+    new_body.append(indent*2 + f'std::cerr << "Exception in {class_name}::{func_name}! See error.log for details." << std::endl;\n')
+    if fallback:
+        new_body.append(indent*2 + f'return {fallback};\n')
+    new_body.append(indent + '}\n')
+    new_body.append(indent + 'catch (...)\n')
+    new_body.append(indent + '{\n')
+    new_body.append(indent*2 + f'ErrorLogger::LogError("{class_name}", "{func_name}", "Unknown", "Unspecified error");\n')
+    new_body.append(indent*2 + f'std::cerr << "Unknown exception in {class_name}::{func_name}! See error.log for details." << std::endl;\n')
+    if fallback:
+        new_body.append(indent*2 + f'return {fallback};\n')
+    new_body.append(indent + '}\n')
+
+    new_body.append(body_lines[-1])
+    return new_body, i + 1
 
 def process_file(filepath, func_sigs):
-    """
-    Process a C++ source file:
-    - For each configured function signature, find the corresponding definition
-    - Detect opening brace on a separate line
-    - Insert check_all call if missing immediately after brace
-    """
     with open(filepath, 'r', encoding='utf-8') as f:
         lines = f.readlines()
+
+    lines = insert_errorlogger_include(lines)
 
     output = []
     i = 0
@@ -65,42 +140,36 @@ def process_file(filepath, func_sigs):
             class_name, func_name, param_names = parse_signature(sig_full)
             if class_name is None:
                 continue
-
-            # const|noexcept|override:  it is extensible
-            pattern = rf'\s*[\w\s\*&:<>,]*\b{class_name}::{func_name}\s*\([^)]*\)\s*(?:\b(?:const|noexcept|override)\b\s*)*(?:\{{)?$'
-            if re.match(pattern, line.strip()):
-                # Found the function signature on its own line
+            if f'{class_name}::{func_name}' in line and '(' in line:
                 output.append(line)
-                i += 1  # Advance to the next line, where the brace is expected
-
+                return_type = extract_return_type(line, class_name, func_name)
+                i += 1
                 if i < len(lines) and '{' in lines[i]:
-                    brace_line = lines[i]
-                    output.append(brace_line)
-
-                    if not has_check_all(lines, i + 1):
-                        output.append(generate_check_all_call(func_name, param_names))
-
-                    i += 1  # Continue processing after brace
-                    inserted = True
-                    break
+                    transformed_body, next_idx = transform_function_body(
+                        lines, i, class_name, func_name, param_names, return_type
+                    )
+                    output.extend(transformed_body)
+                    i = next_idx
                 else:
-                    # Brace not found where expected, still add next line
-                    if i < len(lines):
-                        output.append(lines[i])
-                        i += 1
-                    inserted = True
-                    break
-
+                    output.append(lines[i])
+                    i += 1
+                inserted = True
+                break
         if not inserted:
             output.append(line)
             i += 1
 
-    backup_path = filepath + ".bak"
-    os.rename(filepath, backup_path)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.writelines(output)
-    print(f"Processed {filepath}, backup saved as {backup_path}")
+    original_content = ''.join(lines)
+    updated_content = ''.join(output)
 
+    if original_content != updated_content:
+        backup_path = filepath + ".bak"
+        os.rename(filepath, backup_path)
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(updated_content)
+        print(f"Processed {filepath}, backup saved as {backup_path}")
+    else:
+        print(f"No changes made to {filepath}. Skipped backup.")
 
 def main():
     """
@@ -108,36 +177,25 @@ def main():
     - Load YAML config
     - For each cpp file, process according to configured functions
     """
-    # Ensure Config.yaml exists for testing
     if not os.path.exists('Config.yaml'):
-        with open('Config.yaml', 'w') as f:
-            f.write("TradeExecutor.cpp:\n")
-            f.write("  - bool TradeExecutor::ExecuteBuyOrder(price, amount)\n")
-            f.write("  - bool TradeExecutor::HandleActionSignal(action, price, amount)\n")
-
-    # Ensure TradeExecutor.cpp exists for testing
-    if not os.path.exists('TradeExecutor.cpp'):
-        with open('TradeExecutor.cpp', 'w') as f:
-            f.write("class TradeExecutor {\n")
-            f.write("public:\n")
-            f.write("bool TradeExecutor::ExecuteBuyOrder(double price, double amount)\n")
-            f.write("{\n")
-            f.write("    // Some existing code\n")
-            f.write("    return true;\n")
-            f.write("}\n")
-            f.write("\n")
-            f.write("bool TradeExecutor::HandleActionSignal(int action, double price, double amount) {\n")
-            f.write("    // Another function\n")
-            f.write("    return false;\n")
-            f.write("}\n")
-            f.write("};\n")
-
+        print("Config.yaml not found. Nothing to do.")
+        return
+        
     config = load_config('Config.yaml')
+    if not config:
+        print("Config.yaml is empty or invalid. Nothing to do.")
+        return
+
+    any_file_processed = False
+
     for cpp_file, func_sigs in config.items():
         if not os.path.exists(cpp_file):
             print(f"{cpp_file} not found, skipping.")
             continue
+        any_file_processed = True
         process_file(cpp_file, func_sigs)
+    if not any_file_processed:
+        print("No valid files found in Config.yaml. Exiting without processing.")
 
 if __name__ == "__main__":
     main()
