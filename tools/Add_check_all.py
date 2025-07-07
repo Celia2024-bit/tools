@@ -55,8 +55,8 @@ def insert_errorlogger_include(lines):
         return lines  # already included
     for i, line in enumerate(lines):
         if line.strip().startswith('#include'):
-            lines.insert(i, '#include "Util/ErrorLogger.h"\n')
-            lines.insert(i, '#include "Util/ParameterCheck.h"\n')
+            lines.insert(i, '#include "../Util/ErrorLogger.h"\n')
+            lines.insert(i, '#include "../Util/ParameterCheck.h"\n')
             break
     return lines
 
