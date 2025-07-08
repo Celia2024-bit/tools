@@ -1,0 +1,10 @@
+How to get a new repos that only has the log information of Add_check_all.py
+
+(1)
+pip install git-filter-repo
+
+(2) 
+git clone https://gitlab.com/celia_2025-group/TradeSystem.git  CrytoTradeSystem
+
+(3) 
+git filter-repo --path tools/Add_check_all.py  --path-rename tools/Add_check_all.pyL:Add_check_all.py  --force
