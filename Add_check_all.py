@@ -180,11 +180,11 @@ def main():
     - For each cpp file, process according to configured functions
     """
     if len(sys.argv) < 2:
-        print("Usage: python script.py <directory-containing-cpp-and-yaml>")
+        print("Usage: python script.py <directory-containing-cpp-files>")
         return
 
     search_folder = os.path.abspath(sys.argv[1])
-    config_path = os.path.join(search_folder, "Config.yaml")
+    config_path = os.path.join("config", "functionEnhanced.yaml")
 
     if not os.path.exists(config_path):
         print(f"Config.yaml not found in: {search_folder}")
