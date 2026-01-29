@@ -21,7 +21,7 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
     Monitors a specific process and logs metrics to a CSV file.
    
     """
-    print(f"Starting monitor for: {exe_name}")
+    print(f"Starting monitor ")
     data_buffer = []
     
     # Ensure CSV has headers if it's a new file
@@ -102,7 +102,7 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
                         writer.writerow(C.TREND_COLUMNS)
                     writer.writerow([timestamp, round(avg_mem, 2), int(avg_thr), int(avg_hnd)])
                 
-                print(f"Trend Logged: {len(data_buffer)} pts aggregated.")
+               # print(f"Trend Logged: {len(data_buffer)} pts aggregated.")
                 data_buffer = [] # 清空缓冲区
             
             # This interval determines our Real-time resolution
