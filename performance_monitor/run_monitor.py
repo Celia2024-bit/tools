@@ -13,20 +13,24 @@ def main():
     parser.add_argument("--limit", type=int, default=C.DEFAULT_TREND_LIMIT)
     parser.add_argument("--raw", type=str, default=C.DEFAULT_RAW_FILE)
     parser.add_argument("--trend", type=str, default=C.DEFAULT_TREND_FILE)
+    parser.add_argument("--pid", type=int, default=None)
 
     # 3. 解析参数
     args = parser.parse_args()
 
+    target_display = f"PID {args.pid}" if args.pid else args.exe
+
     print("--- Monitor Configuration ---")
-    print(f"Target EXE: {args.exe}")
-    print(f"Interval  : {args.interval}s")
-    print(f"Trend Limit: {args.limit} points")
-    print(f"Output    : {args.raw}, {args.trend}")
+    print(f"Target      : {target_display}") # 这里改成动态显示
+    print(f"Interval    : {args.interval}s")
+    print(f"Trend Limit : {args.limit} points")
+    print(f"Output      : {args.raw}, {args.trend}")
     print("----------------------------")
 
     # 4. 启动监控
     start_performance_monitor(
         exe_name=args.exe, 
+        target_pid=args.pid,
         raw_csv=args.raw, 
         trend_csv=args.trend, 
         interval_sec=args.interval, 

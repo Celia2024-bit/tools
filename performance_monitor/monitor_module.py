@@ -16,7 +16,7 @@ def get_process_by_name(process_name):
             pass
     return None
 
-def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, trend_limit=20):
+def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, trend_limit=20, target_pid=None):
     """
     Monitors a specific process and logs metrics to a CSV file.
    
@@ -31,11 +31,22 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
             writer.writerow(C.RAW_COLUMNS)
 
     process = None
+    data_buffer = []
+
+    if target_pid:
+        try:
+            process = psutil.Process(target_pid)
+        except psutil.NoSuchProcess:
+            print(f"❌ PID {target_pid} not found.")
+            return
 
     while True:
         try:
             # Re-check for process if it wasn't found or was closed
             if process is None or not process.is_running():
+                if target_pid:
+                    print("Target process finished. Stopping monitor.")
+                    break
                 process = get_process_by_name(exe_name)
                 if process is None:
                     print(f"Waiting for {exe_name} to start...")
