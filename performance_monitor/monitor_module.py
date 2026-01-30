@@ -61,7 +61,7 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
 
             # 2. Memory Usage (Private Bytes)
             mem_info = process.memory_info()
-            mem_mb = mem_info.private / (1024 * 1024)
+            mem_mb = mem_info.rss / (1024 * 1024)
 
             # 3. Thread Count
             threads = process.num_threads()
