@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Performance Monitoring Center</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        body { background: #121212; color: #e0e0e0; font-family: sans-serif; padding: 20px; }
+        .panel { background: #1e1e1e; padding: 20px; border-radius: 12px; border: 1px solid #333; margin-bottom: 20px; }
+        .controls { display: flex; gap: 15px; align-items: center; }
+        input { background: #2d2d2d; border: 1px solid #444; color: #fff; padding: 8px; border-radius: 4px; width: 80px; }
+        button { padding: 10px 20px; border-radius: 6px; cursor: pointer; border: none; font-weight: bold; }
+        .btn-cfg { background: #007bff; color: white; }
+        .btn-start { background: #28a745; color: white; }
+        .btn-stop { background: #dc3545; color: white; }
+        #status-indicator { margin-left: auto; padding: 5px 15px; border-radius: 20px; font-size: 14px; background: #444; }
+        .status-on { background: #28a745 !important; }
+        .chart { height: 350px; width: 100%; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <div class="controls">
+            <div>
+                <label>TARGET PROCESS (EXE)</label>
+                <div style="display: flex; gap: 5px;">
+                    <input list="process-list" id="exe-name" placeholder="Search...">
+                    <button type="button" id="btn-refresh" style="padding: 0 10px; background: #444; color: white;">🔄</button>
+                </div>
+                <datalist id="process-list"></datalist>
+            </div>
+            <div><label>Interval (s)</label><br><input type="number" id="interval" value="1"></div>
+            <div><label>Trend Aggregation (count) </label><br><input type="number" id="trend-limit" value="3"></div>
+            <div><label>Display Window (min))</label><br><input type="number" id="window-min" value="2"></div>
+            <button class="btn-cfg" id="btn-config">CONFIGURE</button>
+            <button class="btn-start" id="btn-start">START</button>
+            <button class="btn-stop" id="btn-stop">STOP</button>
+            <div id="status-indicator">OFFLINE</div>
+        </div>
+    </div>
+    <div class="panel"><div id="realtime-chart" class="chart"></div></div>
+    <div class="panel"><div id="trend-chart" class="chart"></div></div>
+    <script src="monitor_logic.js"></script>
+</body>
+</html>

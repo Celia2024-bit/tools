@@ -1,0 +1,14 @@
+ C:\workspace\SSE\SDCalcPlugin\SDCalcPluginRedesign\Debug> .\WorkspaceTests.exe  --gtest_filter=ChannelCalculatorTest.CurrentRMSCalculatedChannel
+ cd  C:\workspace\SSE\SDCalcPlugin\SDCalcPluginRedesign\Debug
+ 
+ 
+ python plot_resource_monitor.py leak_proof.csv
+ 
+ backend:
+ python server_main.py
+ frontend:
+ python -m http.server   7070
+ http://localhost:7070/index.html
+ 
+requirements:
+pip install fastapi uvicorn  psutil
