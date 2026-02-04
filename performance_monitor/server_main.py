@@ -8,6 +8,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import psutil
+from MonitorManager import MonitorManager
+from TradingManager import TradingManager
 
 # 导入你定义的常量
 import constants as C
@@ -23,81 +25,9 @@ app.add_middleware(
     allow_headers=["*"],  # 允许所有请求头
 )
 
-# --- 监控管理器：负责控制 run_monitor.py ---
-class MonitorManager:
-    def __init__(self):
-        self.process = None
-        self.is_running = False
-        self.current_config = {
-            "exe": C.DEFAULT_EXE,
-            "interval": C.DEFAULT_INTERVAL,
-            "limit": C.DEFAULT_TREND_LIMIT
-        }
-
-    def backup_and_clean(self):
-        """在启动前备份并删除旧的 CSV 文件"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        for file in [C.DEFAULT_RAW_FILE, C.DEFAULT_TREND_FILE]:
-            if os.path.exists(file):
-                backup_name = f"backup_{timestamp}_{file}"
-                try:
-                    shutil.copy(file, backup_name)
-                    os.remove(file)
-                    print(f"DEBUG: Backed up {file} to {backup_name}")
-                except Exception as e:
-                    print(f"DEBUG: Backup error: {e}")
-
-    def start(self):
-        if self.is_running:
-            return False, "Monitor is already running. Please stop it first."
-        
-        # 1. 备份并清理旧文件，确保新运行数据纯净
-        self.backup_and_clean()
-        
-        # 2. 构造命令行参数
-        cmd = [
-            "python", "run_monitor.py",
-            "--exe", self.current_config["exe"],
-            "--interval", str(self.current_config["interval"]),
-            "--limit", str(self.current_config["limit"]),
-            "--raw", C.DEFAULT_RAW_FILE,
-            "--trend", C.DEFAULT_TREND_FILE
-        ]
-        
-        # 3. 启动子进程 (在 Windows 下弹出新窗口显示监控日志)
-        try:
-            self.process = subprocess.Popen(
-                cmd, 
-                creationflags=subprocess.CREATE_NEW_CONSOLE
-            )
-            self.is_running = True
-            return True, f"Monitor started for {self.current_config['exe']} (PID: {self.process.pid})"
-        except Exception as e:
-            return False, f"Failed to launch monitor: {str(e)}"
-
-    def stop(self):
-        if not self.is_running or not self.process:
-            return False, "Monitor is not currently running."
-        
-        try:
-            # 强制杀死进程树 (/T)
-            subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.process.pid)], capture_output=True)
-            self.process = None
-            self.is_running = False
-            return True, "Monitor stopped. Process killed and data saved."
-        except Exception as e:
-            return False, f"Error while stopping: {str(e)}"
-
-    def configure(self, new_config):
-        if self.is_running:
-            return False, "Cannot reconfigure while running! Please stop the monitor first."
-        
-        # 更新配置字典
-        self.current_config.update(new_config)
-        return True, f"Configuration updated: {self.current_config['exe']} @ {self.current_config['interval']}s"
-
 # 实例化管理器
-manager = MonitorManager()
+manager_manager = MonitorManager()
+trading_manager = TradingManager()
 
 @app.get("/processes")
 async def get_processes():
@@ -125,19 +55,32 @@ async def websocket_endpoint(websocket: WebSocket):
                 m_data = msg.get("data", {})
 
                 if m_type == "start":
-                    success, text = manager.start()
+                    success, text = manager_manager.start()
                     await websocket.send_json({"type": "status_log", "success": success, "message": text})
                     # 重置读取位置，因为文件被删除了
                     last_raw_idx = 0
                     last_trend_idx = 0
 
                 elif m_type == "stop":
-                    success, text = manager.stop()
+                    success, text = manager_manager.stop()
+                    await websocket.send_json({"type": "status_log", "success": success, "message": text})
+                
+                elif m_type == "configure":
+                    success, text = manager_manager.configure(m_data)
+                    await websocket.send_json({"type": "status_log", "success": success, "message": text})
+                                
+                elif m_type == "trade_update":
+                    success, text = trading_manager.update_and_build()
+                    await websocket.send_json({"type": "status_log", "success": success, "message": text})
+                    
+                elif m_type == "trade_start":
+                    success, text = trading_manager.start_processes()
                     await websocket.send_json({"type": "status_log", "success": success, "message": text})
 
-                elif m_type == "configure":
-                    success, text = manager.configure(m_data)
+                elif m_type == "trade_stop":
+                    success, text = trading_manager.stop_processes()
                     await websocket.send_json({"type": "status_log", "success": success, "message": text})
+
 
             except asyncio.TimeoutError:
                 pass # 正常超时，继续往下跑文件读取逻辑
