@@ -3,6 +3,7 @@ import shutil
 import subprocess
 from datetime import datetime
 import constants as C
+import psutil
 
 class MonitorManager:
     def __init__(self):
@@ -66,14 +67,13 @@ class MonitorManager:
         ]
         
         try:
-            self.process = subprocess.Popen(
-                cmd, 
-                creationflags=subprocess.CREATE_NEW_CONSOLE  # 仅限 Windows
-            )
+            creation_flags = subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
+
+            self.process = subprocess.Popen(cmd, creationflags=creation_flags)
             self.is_running = True
             return True, f"Monitor started (PID: {self.process.pid})"
         except Exception as e:
-            return False, f"Failed to launch monitor: {str(e)}"
+            return False, f"Launch failed: {str(e)}"
 
     def stop(self):
         """停止监控进程"""
@@ -82,12 +82,15 @@ class MonitorManager:
         
         try:
             # 强制杀死进程树
-            subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.process.pid)], capture_output=True)
-            self.process = None
+            parent = psutil.Process(self.process.pid)
+            for child in parent.children(recursive=True):
+                child.terminate()
+            parent.terminate()
+            
             self.is_running = False
-            return True, "Monitor stopped."
+            return True, "Stopped successfully."
         except Exception as e:
-            return False, f"Error while stopping: {str(e)}"
+            return False, f"Stop error: {str(e)}"
 
     def configure(self, new_config):
         """更新配置"""
