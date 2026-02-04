@@ -19,25 +19,41 @@ class TradingManager:
         self.market_script = os.path.join(self.project_root, "src", "MarketFetch.py")
 
     def update_and_build(self):
-        """Execute build steps and return clean English status."""
+        """通用构建函数：支持 Windows 路径注入和 Linux 标准环境"""
         try:
-            # 1. Git Pull
-            res_git = subprocess.run(["git", "pull"], cwd=self.project_root, capture_output=True, text=True)
+            # 1. 获取当前环境变量副本
+            my_env = os.environ.copy()
+            
+            # --- 关键：仅在 Windows (nt) 下注入 MinGW 路径 ---
+            if os.name == 'nt': 
+                # 这里填入你电脑上真实的 MinGW bin 目录
+                mingw_path = r"C:\ProgramData\mingw64\mingw64\bin" 
+                if mingw_path not in my_env["PATH"]:
+                    my_env["PATH"] = mingw_path + os.pathsep + my_env["PATH"]
+            # ----------------------------------------------
+
+            # 2. Git Pull (带上环境变量)
+            res_git = subprocess.run(["git", "pull"], cwd=self.project_root, 
+                                     capture_output=True, text=True, env=my_env)
             if res_git.returncode != 0:
                 return False, f"GIT FAILED: {res_git.stderr}"
 
-            # 2. Generate Code
+            # 3. Generate Code
             gen_script = os.path.join("utilLocal", "GenerateStrategy", "generate_code.py")
-            res_gen = subprocess.run([self.python_exe, gen_script], cwd=self.project_root, capture_output=True, text=True)
+            res_gen = subprocess.run([self.python_exe, gen_script], cwd=self.project_root, 
+                                     capture_output=True, text=True, env=my_env)
             if res_gen.returncode != 0:
                 return False, f"CODE GEN FAILED: {res_gen.stderr}"
 
-            # 3. Make All
-            res_make = subprocess.run(["make", "all"], cwd=self.project_root, capture_output=True, text=True)
+            # 4. Make All
+            # 在 Windows 下建议先 clean，防止旧的 .o 文件干扰链接 [cite: 8, 9]
+            subprocess.run(["make", "clean"], cwd=self.project_root, env=my_env)
+            
+            res_make = subprocess.run(["make", "all"], cwd=self.project_root, 
+                                      capture_output=True, text=True, env=my_env)
             if res_make.returncode != 0:
                 return False, f"MAKE FAILED: {res_make.stderr}"
             
-            # 返回一个简短的成功标志
             return True, "BUILD SUCCESSFUL: System is up to date."
         except Exception as e:
             return False, f"SYSTEM ERROR: {str(e)}"
