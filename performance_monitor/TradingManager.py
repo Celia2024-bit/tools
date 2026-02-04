@@ -5,10 +5,16 @@ import psutil
 
 class TradingManager:
     def __init__(self, project_root="../.."):
-        self.project_root = os.path.abspath(project_root)
-        self.python_exe = sys.executable
-        # 确定操作系统对应的可执行文件名
-        self.exe_name = "trading_system.exe" if os.name == 'nt' else "trading_system"
+        if os.name == 'nt':
+            self.project_root = os.path.abspath(project_root)
+            self.python_exe = sys.executable
+            # 确定操作系统对应的可执行文件名
+            self.exe_name = "trading_system.exe"
+        else:
+            self.project_root = "/app/TradeSystem"
+            self.python_exe = "python3"
+            # 确定操作系统对应的可执行文件名
+            self.exe_name = "trading_system"
         self.exe_path = os.path.join(self.project_root, "output", self.exe_name)
         self.market_script = os.path.join(self.project_root, "src", "MarketFetch.py")
 
