@@ -8,6 +8,8 @@ class MonitorManager:
     def __init__(self):
         self.process = None
         self.is_running = False
+        self.backup_dir = "backups"  # Folder to store old logs
+        self.max_backups = 5         # Keep only the last 5 sets of logs
         self.current_config = {
             "exe": C.DEFAULT_EXE,
             "interval": C.DEFAULT_INTERVAL,
@@ -15,17 +17,37 @@ class MonitorManager:
         }
 
     def backup_and_clean(self):
-        """在启动前备份并删除旧的 CSV 文件"""
+        """Backs up old CSV files to a subfolder and keeps only the most recent ones."""
+        if not os.path.exists(self.backup_dir):
+            os.makedirs(self.backup_dir)
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # 1. Move current files to backup folder
         for file in [C.DEFAULT_RAW_FILE, C.DEFAULT_TREND_FILE]:
             if os.path.exists(file):
-                backup_name = f"backup_{timestamp}_{file}"
+                backup_name = os.path.join(self.backup_dir, f"backup_{timestamp}_{file}")
                 try:
-                    shutil.copy(file, backup_name)
-                    os.remove(file)
-                    print(f"DEBUG: Backed up {file} to {backup_name}")
+                    shutil.move(file, backup_name) # Move instead of copy+remove
+                    print(f"DEBUG: Moved {file} to {backup_name}")
                 except Exception as e:
                     print(f"DEBUG: Backup error: {e}")
+
+        # 2. Cleanup old backups (Keep only the latest N)
+        try:
+            # List all files in backup dir sorted by creation time
+            all_backups = sorted(
+                [os.path.join(self.backup_dir, f) for f in os.listdir(self.backup_dir)],
+                key=os.path.getctime
+            )
+            
+            # If we have more than (max_backups * 2 files), delete the oldest ones
+            while len(all_backups) > (self.max_backups * 2):
+                oldest_file = all_backups.pop(0)
+                os.remove(oldest_file)
+                print(f"DEBUG: Deleted old backup: {oldest_file}")
+        except Exception as e:
+            print(f"DEBUG: Cleanup error: {e}")
 
     def start(self):
         """启动监控子进程"""
