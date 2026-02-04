@@ -1,0 +1,19 @@
+# FastAPI 核心框架
+fastapi==0.104.1
+
+# ASGI 服务器 (用于运行 FastAPI)
+uvicorn[standard]==0.24.0
+
+# WebSocket 支持 (FastAPI 内置，但需要显式声明)
+websockets==12.0
+
+# 进程监控
+psutil==5.9.6
+
+# Python 标准库已包含以下模块，无需安装:
+# - asyncio
+# - os
+# - json
+# - subprocess
+# - shutil
+# - datetime
