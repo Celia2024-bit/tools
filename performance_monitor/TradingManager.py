@@ -34,6 +34,13 @@ class TradingManager:
 
             # 2. Git Pull (带上环境变量)
             subprocess.run(["git", "checkout", "--", "."], cwd=self.project_root, env=my_env)
+            # 2. 清理子模块 (foreach 对每个子模块运行 checkout)
+            subprocess.run(["git", "submodule", "foreach", "--recursive", "git", "checkout", "--", "."], 
+                           cwd=self.project_root, env=my_env)
+            # 3. 同步子模块状态
+            subprocess.run(["git", "submodule", "update", "--init", "--recursive"], 
+                           cwd=self.project_root, env=my_env)
+                           
             res_git = subprocess.run(["git", "pull"], cwd=self.project_root, 
                                      capture_output=True, text=True, env=my_env)
             if res_git.returncode != 0:
