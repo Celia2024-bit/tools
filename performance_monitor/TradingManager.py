@@ -37,6 +37,11 @@ class TradingManager:
                                      capture_output=True, text=True, env=my_env)
             if res_git.returncode != 0:
                 return False, f"GIT FAILED: {res_git.stderr}"
+                
+            res_git = subprocess.run(["git", "submodule", "update"], cwd=self.project_root, 
+                                     capture_output=True, text=True, env=my_env)
+            if res_git.returncode != 0:
+                return False, f"GIT FAILED: {res_git.stderr}"
 
             # 3. Generate Code
             gen_script = os.path.join("utilLocal", "GenerateStrategy", "generate_code.py")
