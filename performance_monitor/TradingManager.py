@@ -33,6 +33,7 @@ class TradingManager:
             # ----------------------------------------------
 
             # 2. Git Pull (带上环境变量)
+            subprocess.run(["git", "checkout", "--", "."], cwd=self.project_root, env=my_env)
             res_git = subprocess.run(["git", "pull"], cwd=self.project_root, 
                                      capture_output=True, text=True, env=my_env)
             if res_git.returncode != 0:
