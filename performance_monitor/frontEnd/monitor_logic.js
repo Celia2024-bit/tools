@@ -59,6 +59,12 @@ function connect() {
         } else if (msg.type === "status_log") {
             const el = document.getElementById('status-indicator');
             el.innerText = msg.message;
+            if (msg.message.includes("BUILD") || msg.message.includes("FAILED")) {
+                const btn = document.getElementById('btn-trade-update');
+                btn.innerText = "UPDATE & BUILD"; // 恢复文字
+                btn.disabled = false;            // 启用按钮
+                btn.style.opacity = "1";         // 恢复亮度
+            }
             el.className = msg.message.includes("started") ? "status-on" : "";
         }
     };
@@ -165,6 +171,31 @@ document.getElementById('btn-refresh').onclick = async () => {
     btn.innerText = "⏳"; // 变成等待图标
     await refreshProcessList(); // 重新请求后端
     btn.innerText = "🔄"; // 恢复
+};
+
+// --- 新增：交易系统控制逻辑 ---
+
+// (1) 更新并编译按钮
+document.getElementById('btn-trade-update').onclick = () => {
+    const btn = document.getElementById('btn-trade-update');
+    btn.innerText = "BUILDING..."; // 改变文字
+    btn.disabled = true;           // 禁用按钮，防止连点
+    btn.style.opacity = "0.5";     // 视觉上变灰
+
+    socket.send(JSON.stringify({ type: "trade_update" }));
+    console.log("Update instruction sent...");
+};
+
+// (2) 启动系统按钮
+document.getElementById('btn-trade-start').onclick = () => {
+    console.log("Sending: trade_start");
+    socket.send(JSON.stringify({ type: "trade_start" }));
+};
+
+// (3) 关闭系统按钮
+document.getElementById('btn-trade-stop').onclick = () => {
+    console.log("Sending: trade_stop");
+    socket.send(JSON.stringify({ type: "trade_stop" }));
 };
 
 // 页面加载只连 WebSocket，不画图
