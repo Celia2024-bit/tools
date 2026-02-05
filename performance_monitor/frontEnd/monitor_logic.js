@@ -3,6 +3,12 @@ let rtChart = null, trChart = null;
 let rtData = { times: [], mem: [], hnd: [] };
 let trData = { times: [], mem: [], hnd: [] };
 
+const isLocal = false;
+// 你的 Render 后端地址 (去掉 https:// 前缀)
+const renderHost = "tradesystem-v86g.onrender.com"; 
+
+const API_BASE = isLocal ? "http://localhost:8080" : `https://${renderHost}`;
+const WS_BASE  = isLocal ? "ws://localhost:8080"  : `wss://${renderHost}`;
 
 window.onload = async () => {
     // 1. 立即获取进程列表
@@ -46,7 +52,8 @@ function createCharts() {
 
 // 2. 连接逻辑
 function connect() {
-    socket = new WebSocket('ws://localhost:8080/ws');
+    console.log(`Connecting to WebSocket: ${WS_BASE}/ws`);
+    socket = new WebSocket(`${WS_BASE}/ws`);
     
     socket.onmessage = (event) => {
         const msg = JSON.parse(event.data);
@@ -118,7 +125,7 @@ function updateTR(data) {
 
 async function refreshProcessList() {
     try {
-        const response = await fetch('http://localhost:8080/processes');
+        const response = await fetch(`${API_BASE}/processes`);
         if (!response.ok) throw new Error('Network response was not ok');
         
         const data = await response.json();
