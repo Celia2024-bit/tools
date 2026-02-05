@@ -5,8 +5,8 @@ let trData = { times: [], mem: [], hnd: [] };
 
 const isLocal = false;
 // 你的 Render 后端地址 (去掉 https:// 前缀)
-const renderHost = "tradesystem-v86g.onrender.com"; 
-
+//const renderHost = "tradesystem-v86g.onrender.com"; 
+const renderHost = "performancemonitor-912333184212.europe-west1.run.app"; 
 const API_BASE = isLocal ? "http://localhost:8080" : `https://${renderHost}`;
 const WS_BASE  = isLocal ? "ws://localhost:8080"  : `wss://${renderHost}`;
 
