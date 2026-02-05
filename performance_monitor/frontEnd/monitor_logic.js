@@ -147,14 +147,39 @@ async function refreshProcessList() {
 
 // 3. 按钮逻辑
 document.getElementById('btn-config').onclick = () => {
+    const exeName = document.getElementById('exe-name').value;
+    
+    if (!exeName) {
+        alert("Please choose process name ！");
+        return;
+    }
+
+    // 1. 发送配置到后端
     socket.send(JSON.stringify({
         type: "configure",
         data: {
-            exe: document.getElementById('exe-name').value,
+            exe: exeName,
             interval: parseInt(document.getElementById('interval').value),
             limit: parseInt(document.getElementById('trend-limit').value)
         }
     }));
+
+    // 2. 【关键步骤】配置发送后，激活 START 按钮
+    const startBtn = document.getElementById('btn-start');
+    startBtn.disabled = false;
+    startBtn.title = "Ready to start"; // 修改鼠标悬停提示
+    
+    // 3. 视觉反馈：让用户知道配置成功了
+    const cfgBtn = document.getElementById('btn-config');
+    cfgBtn.innerText = "CONFIGURED ✓";
+    cfgBtn.style.background = "#28a745";
+    
+    setTimeout(() => {
+        cfgBtn.innerText = "CONFIGURE";
+        cfgBtn.style.background = "#007bff";
+    }, 1500);
+
+    console.log("Configuration applied. Start button enabled.");
 };
 
 document.getElementById('btn-start').onclick = () => {
@@ -168,7 +193,10 @@ document.getElementById('btn-start').onclick = () => {
 
 document.getElementById('btn-stop').onclick = () => {
     socket.send(JSON.stringify({ type: "stop" }));
-    // 停止后清空引用，彻底防止异步数据飘进来报错
+    
+    // 停止后把 START 重新变灰，确保逻辑严谨
+    document.getElementById('btn-start').disabled = true;
+    
     if(rtChart) { rtChart.dispose(); rtChart = null; }
     if(trChart) { trChart.dispose(); trChart = null; }
 };
