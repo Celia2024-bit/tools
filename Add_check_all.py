@@ -77,7 +77,7 @@ def transform_function_body(lines, start_idx, class_name, func_name, param_names
     content = body_lines[1:-1]
     fallback = get_fallback_value(return_type)
 
-    if not param_names or has_safety_wrapper(content, 0):
+    if has_safety_wrapper(content, 0):
         return body_lines, i + 1
 
     for raw_line in content:
@@ -90,18 +90,19 @@ def transform_function_body(lines, start_idx, class_name, func_name, param_names
     new_body = [body_lines[0]]
 
     # check_all block
-    if return_type != 'void':
-        new_body.append(indent + f'if (!check_all("{class_name}::{func_name}", {", ".join(param_names)}))\n')
-        new_body.append(indent + '{\n')
-        new_body.append(indent*2 + f'std::cerr << "Invalid parameters in {class_name}::{func_name} !  See parameter_check.log for details" << std::endl;\n')
-        new_body.append(indent*2 + f'return {fallback};\n')
-        new_body.append(indent + '}\n')
-    else:
-        new_body.append(indent + f'if (!check_all("{class_name}::{func_name}", {", ".join(param_names)}))\n')
-        new_body.append(indent + '{\n')
-        new_body.append(indent*2 + 'std::cerr << "Invalid parameters!" << std::endl;\n')
-        new_body.append(indent*2 + 'return;\n')
-        new_body.append(indent + '}\n')
+    if param_names:
+        if return_type != 'void':
+            new_body.append(indent + f'if (!check_all("{class_name}::{func_name}", {", ".join(param_names)}))\n')
+            new_body.append(indent + '{\n')
+            new_body.append(indent*2 + f'std::cerr << "Invalid parameters in {class_name}::{func_name} !  See parameter_check.log for details" << std::endl;\n')
+            new_body.append(indent*2 + f'return {fallback};\n')
+            new_body.append(indent + '}\n')
+        else:
+            new_body.append(indent + f'if (!check_all("{class_name}::{func_name}", {", ".join(param_names)}))\n')
+            new_body.append(indent + '{\n')
+            new_body.append(indent*2 + 'std::cerr << "Invalid parameters!" << std::endl;\n')
+            new_body.append(indent*2 + 'return;\n')
+            new_body.append(indent + '}\n')
 
     # try-catch block
     new_body.append(indent + 'try\n')
