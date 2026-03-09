@@ -19,10 +19,12 @@ def get_process_by_name(process_name):
 def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, trend_limit=20, target_pid=None):
     """
     Monitors a specific process and logs metrics to a CSV file.
-   
+    Tracks: context switches (voluntary + involuntary), memory, threads, handles.
+
+    Context switch rate (per second) is more meaningful than CPU% for
+    diagnosing thread scheduling pressure and contention.
     """
-    print(f"Starting monitor ")
-    data_buffer = []
+    print(f"Starting monitor")
     
     # Ensure CSV has headers if it's a new file
     if not os.path.exists(raw_csv):
@@ -32,6 +34,11 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
 
     process = None
     data_buffer = []
+
+    # Track previous ctx switch counts to compute per-second delta
+    prev_ctx_vol  = None
+    prev_ctx_invol = None
+    prev_time     = None
 
     if target_pid:
         try:
@@ -54,19 +61,35 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
                     continue
                 else:
                     print(f"Process {exe_name} found (PID: {process.pid})")
+                    # Reset ctx baseline when process is (re)found
+                    prev_ctx_vol   = None
+                    prev_ctx_invol = None
+                    prev_time      = None
 
-            # 1. CPU Usage 
-            # interval=None means it calculates since the last call (non-blocking)
-            cpu = process.cpu_percent(interval=None)
+            # ── 1. Context Switches (delta per second) ───────────────────────
+            ctx        = process.num_ctx_switches()
+            now        = time.time()
 
-            # 2. Memory Usage (Private Bytes)
-            mem_info = process.memory_info()
-            mem_mb = mem_info.rss / (1024 * 1024)
+            if prev_ctx_vol is None:
+                # First sample — just capture baseline, record 0
+                ctx_vol_rate   = 0
+                ctx_invol_rate = 0
+            else:
+                elapsed        = now - prev_time if (now - prev_time) > 0 else 1
+                ctx_vol_rate   = (ctx.voluntary   - prev_ctx_vol)   / elapsed
+                ctx_invol_rate = (ctx.involuntary  - prev_ctx_invol) / elapsed
 
-            # 3. Thread Count
+            prev_ctx_vol   = ctx.voluntary
+            prev_ctx_invol = ctx.involuntary
+            prev_time      = now
+
+            # ── 2. Memory (RSS) ───────────────────────────────────────────────
+            mem_mb = process.memory_info().rss / (1024 * 1024)
+
+            # ── 3. Thread Count ───────────────────────────────────────────────
             threads = process.num_threads()
 
-            # 4. Handle Count (Windows Specific)
+            # ── 4. Handle / FD Count ──────────────────────────────────────────
             if platform.system() == "Windows":
                 handles = process.num_handles()
             else:
@@ -74,48 +97,63 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
 
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # Data Record
-            record = [timestamp, cpu, threads, handles, round(mem_mb, 2)]
+            # RAW record: timestamp, ctx_vol/s, ctx_invol/s, threads, handles, memory_mb
+            record = [
+                timestamp,
+                round(ctx_vol_rate,   1),
+                round(ctx_invol_rate, 1),
+                threads,
+                handles,
+                round(mem_mb, 2)
+            ]
 
-            # Write to CSV
+            # Write raw CSV
             with open(raw_csv, 'a', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(record)
-                f.flush() # Ensure data is written to disk
+                f.flush()
 
-            #print(f"Logged: {record}")
             data_buffer.append({
-                'mem': mem_mb,
-                'threads': threads,
-                'handles': handles
+                'ctx_vol':   ctx_vol_rate,
+                'ctx_invol': ctx_invol_rate,
+                'mem':       mem_mb,
+                'threads':   threads,
+                'handles':   handles,
             })
-            
+
+            # ── Aggregate into trend point ────────────────────────────────────
             if len(data_buffer) >= trend_limit:
-                avg_mem = sum(d['mem'] for d in data_buffer) / len(data_buffer)
-                avg_thr = sum(d['threads'] for d in data_buffer) / len(data_buffer)
-                avg_hnd = sum(d['handles'] for d in data_buffer) / len(data_buffer)
-                
+                avg_ctx_vol   = sum(d['ctx_vol']   for d in data_buffer) / len(data_buffer)
+                avg_ctx_invol = sum(d['ctx_invol'] for d in data_buffer) / len(data_buffer)
+                avg_mem       = sum(d['mem']        for d in data_buffer) / len(data_buffer)
+                avg_thr       = sum(d['threads']    for d in data_buffer) / len(data_buffer)
+                avg_hnd       = sum(d['handles']    for d in data_buffer) / len(data_buffer)
+
                 f_tr_ex = os.path.exists(trend_csv)
                 with open(trend_csv, 'a', newline='') as f:
                     writer = csv.writer(f)
                     if not f_tr_ex:
                         writer.writerow(C.TREND_COLUMNS)
-                    writer.writerow([timestamp, round(avg_mem, 2), int(avg_thr), int(avg_hnd)])
-                
-               # print(f"Trend Logged: {len(data_buffer)} pts aggregated.")
-                data_buffer = [] # 清空缓冲区
-            
-            # This interval determines our Real-time resolution
+                    writer.writerow([
+                        timestamp,
+                        round(avg_ctx_vol,   1),
+                        round(avg_ctx_invol, 1),
+                        round(avg_mem,       2),
+                        int(avg_thr),
+                        int(avg_hnd)
+                    ])
+
+                data_buffer = []
+
             time.sleep(interval_sec)
 
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             print("Process lost or access denied. Searching again...")
-            process = None
+            process        = None
+            prev_ctx_vol   = None
+            prev_ctx_invol = None
+            prev_time      = None
             time.sleep(2)
         except Exception as e:
             print(f"Unexpected error: {e}")
             time.sleep(5)
-
-# Example Usage:
-# if __name__ == "__main__":
-#     start_performance_monitor("your_product.exe", "raw_performance.csv", 60)
