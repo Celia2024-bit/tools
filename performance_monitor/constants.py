@@ -1,8 +1,8 @@
 # constants.py
 
 # 默认文件名
-DEFAULT_RAW_FILE = "raw_performance.csv"
-DEFAULT_TREND_FILE = "trend_performance.csv"
+DEFAULT_RAW_FILE = "/tmp/raw_performance.csv"
+DEFAULT_TREND_FILE = "/tmp/trend_performance.csv"
 
 # 监控默认配置
 DEFAULT_EXE = "WorkspaceTests.exe"
