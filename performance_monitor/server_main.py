@@ -121,6 +121,16 @@ async def websocket_endpoint(websocket: WebSocket):
         print("Client disconnected.")
     except Exception as e:
         print(f"Server Internal Error: {e}")
+        
+@app.get("/debug")
+async def debug():
+    import os
+    return {
+        "raw_exists": os.path.exists(C.DEFAULT_RAW_FILE),
+        "trend_exists": os.path.exists(C.DEFAULT_TREND_FILE),
+        "cwd": os.getcwd(),
+        "files": os.listdir(".")
+    }
 
 if __name__ == "__main__":
     # 启动时确保旧进程清理干净 (可选)
