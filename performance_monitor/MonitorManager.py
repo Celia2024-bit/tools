@@ -67,9 +67,10 @@ class MonitorManager:
         ]
         
         try:
-            creation_flags = subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
-
-            self.process = subprocess.Popen(cmd, creationflags=creation_flags)
+            if os.name == 'nt':
+                self.process = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                self.process = subprocess.Popen(cmd, start_new_session=True)
             self.is_running = True
             return True, f"Monitor started (PID: {self.process.pid})"
         except Exception as e:
