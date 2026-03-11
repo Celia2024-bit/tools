@@ -4,8 +4,8 @@ let rtData = { times: [], mem: [], hnd: [], ctx_vol: [], ctx_invol: [], thr: [] 
 let trData = { times: [], mem: [], hnd: [], ctx_vol: [], ctx_invol: [], thr: [] };
 
 const isLocal = false;
-const renderHost = "tradesystem-v86g.onrender.com"; 
-//const renderHost = "performancemonitor-912333184212.europe-west1.run.app"; 
+//const renderHost = "tradesystem-v86g.onrender.com"; 
+const renderHost = "performancemonitor-912333184212.europe-west1.run.app"; 
 const API_BASE = isLocal ? "http://localhost:8080" : `https://${renderHost}`;
 const WS_BASE  = isLocal ? "ws://localhost:8080"  : `wss://${renderHost}`;
 
