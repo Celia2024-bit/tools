@@ -155,9 +155,9 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
                         int(avg_hnd),
                         round(max_peak_vol, 1),      # 新增：自愿切换峰值
                         max_peak_vol_time,           # 新增：自愿切换达峰时刻
+                        vol_spikes,
                         round(max_peak_invol, 1),    # 非自愿切换峰值
                         max_peak_invol_time ,         # 非自愿切换达峰时刻
-                        vol_spikes,
                         invol_spikes
                     ])
 
