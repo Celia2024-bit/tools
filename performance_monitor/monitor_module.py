@@ -114,6 +114,7 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
                 f.flush()
 
             data_buffer.append({
+                'timestamp': timestamp,
                 'ctx_vol':   ctx_vol_rate,
                 'ctx_invol': ctx_invol_rate,
                 'mem':       mem_mb,
@@ -129,6 +130,17 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
                 avg_thr       = sum(d['threads']    for d in data_buffer) / len(data_buffer)
                 avg_hnd       = sum(d['handles']    for d in data_buffer) / len(data_buffer)
 
+               # 【新增】锁定 Peak：找出这 20s 内 invol 切换最高的那一刻
+                peak_vol_entry = max(data_buffer, key=lambda x: x['ctx_vol'])
+                max_peak_vol = peak_vol_entry['ctx_vol']
+                max_peak_vol_time = peak_vol_entry['timestamp']
+                vol_spikes = sum(1 for d in data_buffer if d['ctx_vol'] > getattr(C, 'VOL_THRESHOLD', 5000))
+                # 找到非自愿切换的峰值
+                peak_invol_entry = max(data_buffer, key=lambda x: x['ctx_invol'])
+                max_peak_invol = peak_invol_entry['ctx_invol']
+                max_peak_invol_time = peak_invol_entry['timestamp']
+                invol_spikes = sum(1 for d in data_buffer if d['ctx_invol'] > getattr(C, 'INVOL_THRESHOLD', 50))
+                
                 f_tr_ex = os.path.exists(trend_csv)
                 with open(trend_csv, 'a', newline='') as f:
                     writer = csv.writer(f)
@@ -140,12 +152,20 @@ def start_performance_monitor(exe_name, raw_csv, trend_csv, interval_sec=1, tren
                         round(avg_ctx_invol, 1),
                         round(avg_mem,       2),
                         int(avg_thr),
-                        int(avg_hnd)
+                        int(avg_hnd),
+                        round(max_peak_vol, 1),      # 新增：自愿切换峰值
+                        max_peak_vol_time,           # 新增：自愿切换达峰时刻
+                        round(max_peak_invol, 1),    # 非自愿切换峰值
+                        max_peak_invol_time ,         # 非自愿切换达峰时刻
+                        vol_spikes,
+                        invol_spikes
                     ])
 
                 data_buffer = []
 
+            prev_ctx_vol, prev_ctx_invol, prev_time = ctx.voluntary, ctx.involuntary, now
             time.sleep(interval_sec)
+            
 
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             print("Process lost or access denied. Searching again...")
