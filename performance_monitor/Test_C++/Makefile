@@ -1,54 +1,60 @@
 # Makefile
-# Builds healthy_worker and leaky_worker with gcc
-# Works on Windows (MinGW) and Linux
-#
-# Usage:
-#   make all          — build both
-#   make healthy      — build healthy only
-#   make leaky        — build leaky only
-#   make clean        — remove binaries and temp files
+# Builds healthy_worker, leaky_worker and pressure with g++
 
-CXX     = g++
-CFLAGS  = -O2 -Wall
+CXX      = g++
+# 建议增加 -static 确保 .exe 在 Windows 其他机器上也能跑
+CFLAGS   = -O2 -Wall -static
 
 # Detect OS
 ifeq ($(OS), Windows_NT)
-    EXT      = .exe
-    LDFLAGS  = -lws2_32
-    RM       = del /Q
-    CLEAN_TMP = del /Q *.tmp 2>nul || true
+    EXT       = .exe
+    # Windows 需要链接 ws2_32 (网络) 和 winmm (高精度定时器)
+    LDFLAGS   = -lws2_32 -lwinmm
+    RM        = del /Q
+    # Windows 下创建目录的命令
+    MKDIR     = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
 else
-    EXT      =
-    LDFLAGS  = -lpthread
-    RM       = rm -f
-    CLEAN_TMP = rm -f *.tmp /tmp/leak_test.tmp
+    EXT       =
+    LDFLAGS   = -lpthread
+    RM        = rm -f
+    MKDIR     = mkdir -p $(1)
 endif
 
-HEALTHY = healthy_worker$(EXT)
-LEAKY   = leaky_worker$(EXT)
+# 目标路径
+HEALTHY  = MemoryLeak/healthy_worker$(EXT)
+LEAKY    = MemoryLeak/leaky_worker$(EXT)
+PRESSURE = ContextSwitches/pressure$(EXT)
 
-.PHONY: all healthy leaky clean
+.PHONY: all healthy leaky pressure clean dirs
 
-all: healthy leaky
+all: dirs healthy leaky pressure
 	@echo ""
-	@echo "Built:"
-	@echo "  $(HEALTHY)  — clean worker, monitor should show flat metrics"
-	@echo "  $(LEAKY)    — leaky worker, monitor should show upward trends"
+	@echo "✅ Build Complete:"
+	@echo "  1. $(HEALTHY)  - Normal memory/CPU usage"
+	@echo "  2. $(LEAKY)    - Simulated memory leak"
+	@echo "  3. $(PRESSURE) - High context switch simulation"
 	@echo ""
-	@echo "Run monitor against one of them, then check results:"
-	@echo "  python3 run_monitor.py --exe $(HEALTHY) --interval 2 --limit 5"
-	@echo "  python3 check_regression.py --trend_csv trend_performance.csv"
+	@echo "Usage Example:"
+	@echo "  python run_monitor.py --exe $(PRESSURE) --interval 1 --limit 10"
 
-healthy: healthy_worker.cpp
-	$(CXX) $(CFLAGS) -o $(HEALTHY) healthy_worker.cpp $(LDFLAGS)
-	@echo "✅ built $(HEALTHY)"
+# 自动创建子目录防止报错
+dirs:
+	@$(call MKDIR,MemoryLeak)
+	@$(call MKDIR,ContextSwitches)
 
-leaky: leaky_worker.cpp
-	$(CXX) $(CFLAGS) -o $(LEAKY) leaky_worker.cpp $(LDFLAGS)
-	@echo "✅ built $(LEAKY)"
+healthy: MemoryLeak/healthy_worker.cpp
+	$(CXX) $(CFLAGS) -o $(HEALTHY) MemoryLeak/healthy_worker.cpp $(LDFLAGS)
+	@echo "Built $(HEALTHY)"
+
+leaky: MemoryLeak/leaky_worker.cpp
+	$(CXX) $(CFLAGS) -o $(LEAKY) MemoryLeak/leaky_worker.cpp $(LDFLAGS)
+	@echo "Built $(LEAKY)"
+  
+pressure: ContextSwitches/pressure.cpp
+	$(CXX) $(CFLAGS) -o $(PRESSURE) ContextSwitches/pressure.cpp $(LDFLAGS)
+	@echo "Built $(PRESSURE)"
 
 clean:
-	$(RM) $(HEALTHY) $(LEAKY) 2>/dev/null || true
-	$(CLEAN_TMP)
-	$(RM) *.csv 2>/dev/null || true
-	@echo "✅ cleaned"
+	$(RM) $(HEALTHY) $(LEAKY) $(PRESSURE) 2>nul || true
+	$(RM) *.csv 2>nul || true
+	@echo "Cleaned binaries and CSVs"
