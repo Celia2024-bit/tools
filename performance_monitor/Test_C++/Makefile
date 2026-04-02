@@ -10,14 +10,13 @@ ifeq ($(OS), Windows_NT)
     EXT       = .exe
     # Windows 需要链接 ws2_32 (网络) 和 winmm (高精度定时器)
     LDFLAGS   = -lws2_32 -lwinmm
-    RM        = del /Q
-    # Windows 下创建目录的命令
-    MKDIR     = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
+    MKDIR = if not exist $(1) mkdir $(1)
+    RM    = del /Q /F
 else
     EXT       =
     LDFLAGS   = -lpthread
-    RM        = rm -f
-    MKDIR     = mkdir -p $(1)
+    MKDIR = mkdir -p $(1)
+    RM    = rm -f
 endif
 
 # 目标路径
@@ -39,8 +38,12 @@ all: dirs healthy leaky pressure
 
 # 自动创建子目录防止报错
 dirs:
-	@$(call MKDIR,MemoryLeak)
-	@$(call MKDIR,ContextSwitches)
+	@if [ "$(OS)" = "Windows_NT" ]; then \
+		if [ ! -d "MemoryLeak" ]; then mkdir MemoryLeak; fi; \
+		if [ ! -d "ContextSwitches" ]; then mkdir ContextSwitches; fi; \
+	else \
+		mkdir -p MemoryLeak ContextSwitches; \
+	fi
 
 healthy: MemoryLeak/healthy_worker.cpp
 	$(CXX) $(CFLAGS) -o $(HEALTHY) MemoryLeak/healthy_worker.cpp $(LDFLAGS)
