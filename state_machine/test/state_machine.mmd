@@ -1,0 +1,20 @@
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> PendingPayment : <font color='#0277bd'><b>CreateOrder</b></font>
+    PendingPayment --> Paid : <font color='#0277bd'><b>PaySuccess</b></font> <font color='#e65100'>/ SendPaymentNotification</font>
+    PendingPayment --> Cancelled : <font color='#0277bd'><b>PayTimeout</b></font>
+    Paid --> Shipped : <font color='#0277bd'><b>Ship</b></font>
+    Shipped --> Completed : <font color='#0277bd'><b>ConfirmReceipt</b></font>
+    Shipped --> Completed : <font color='#0277bd'><b>AutoConfirmTimeout</b></font> <font color='#e65100'>/ AutoConfirmReceipt</font>
+    Paid --> Cancelled : <font color='#0277bd'><b>ApplyRefund</b></font> <font color='#8e24aa'>[AmountLte100]</font> <font color='#e65100'>/ AutoRefund</font>
+    Paid --> PendingAudit : <font color='#0277bd'><b>ApplyRefund</b></font> <font color='#8e24aa'>[AmountGt100]</font> <font color='#e65100'>/ TransferToManualAudit</font>
+    PendingAudit --> Cancelled : <font color='#0277bd'><b>AuditPass</b></font> <font color='#e65100'>/ RefundToAccount</font>
+    Completed --> [*]
+    Cancelled --> [*]
+
+    classDef initialStyle fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    class Idle initialStyle
+    classDef normalStyle fill:#f0f4c3,stroke:#afb42b,stroke-width:1px;
+    class PendingPayment, Paid, Shipped, PendingAudit normalStyle
+    classDef finalStyle fill:#ffebee,stroke:#e53935,stroke-width:2px;
+    class Completed, Cancelled finalStyle

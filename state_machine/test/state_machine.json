@@ -1,0 +1,130 @@
+{
+  "initial_state": "Idle",
+  "states": [
+    {
+      "id": "S000",
+      "name": "Idle",
+      "type": "initial",
+      "description": "Order not created yet"
+    },
+    {
+      "id": "S001",
+      "name": "PendingPayment",
+      "type": "normal",
+      "description": null
+    },
+    {
+      "id": "S002",
+      "name": "Paid",
+      "type": "normal",
+      "description": null
+    },
+    {
+      "id": "S003",
+      "name": "Shipped",
+      "type": "normal",
+      "description": null
+    },
+    {
+      "id": "S004",
+      "name": "Completed",
+      "type": "final",
+      "description": null
+    },
+    {
+      "id": "S005",
+      "name": "Cancelled",
+      "type": "final",
+      "description": null
+    },
+    {
+      "id": "S006",
+      "name": "PendingAudit",
+      "type": "normal",
+      "description": "Refund amount is large, manual confirmation required"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "T001",
+      "from": "Idle",
+      "event": "CreateOrder",
+      "guard": null,
+      "to": "PendingPayment",
+      "action": null,
+      "description": null
+    },
+    {
+      "id": "T002",
+      "from": "PendingPayment",
+      "event": "PaySuccess",
+      "guard": null,
+      "to": "Paid",
+      "action": "SendPaymentNotification",
+      "description": null
+    },
+    {
+      "id": "T003",
+      "from": "PendingPayment",
+      "event": "PayTimeout",
+      "guard": null,
+      "to": "Cancelled",
+      "action": null,
+      "description": null
+    },
+    {
+      "id": "T004",
+      "from": "Paid",
+      "event": "Ship",
+      "guard": null,
+      "to": "Shipped",
+      "action": null,
+      "description": null
+    },
+    {
+      "id": "T005",
+      "from": "Shipped",
+      "event": "ConfirmReceipt",
+      "guard": null,
+      "to": "Completed",
+      "action": null,
+      "description": null
+    },
+    {
+      "id": "T006",
+      "from": "Shipped",
+      "event": "AutoConfirmTimeout",
+      "guard": null,
+      "to": "Completed",
+      "action": "AutoConfirmReceipt",
+      "description": null
+    },
+    {
+      "id": "T007",
+      "from": "Paid",
+      "event": "ApplyRefund",
+      "guard": "AmountLte100",
+      "to": "Cancelled",
+      "action": "AutoRefund",
+      "description": "Small refund auto-approved, no manual action"
+    },
+    {
+      "id": "T008",
+      "from": "Paid",
+      "event": "ApplyRefund",
+      "guard": "AmountGt100",
+      "to": "PendingAudit",
+      "action": "TransferToManualAudit",
+      "description": null
+    },
+    {
+      "id": "T009",
+      "from": "PendingAudit",
+      "event": "AuditPass",
+      "guard": null,
+      "to": "Cancelled",
+      "action": "RefundToAccount",
+      "description": null
+    }
+  ]
+}
