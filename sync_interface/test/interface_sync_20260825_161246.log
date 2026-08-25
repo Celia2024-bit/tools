@@ -1,0 +1,36 @@
+
+⚙️ Inspecting Derived Class file: test\LoggerObserver.h...
+
+   ⚠️ [DELETED IN BASE]
+   'void OnConnected()'
+      -> remove override
+
+   ⚠️ [PARAMS CHANGED]
+   'void OnData(int id)'
+      -> remove override
+      + 'void OnData(int id, double timestamp) override'
+
+   ✨ [NEW IN BASE]
+   + 'void OnError(int err_code) override'
+
+⚙️ Inspecting Derived Class file: test\NetworkObserver.h...
+
+   ⚠️ [DELETED IN BASE]
+   'void OnConnected()'
+      -> remove override
+
+   ⚠️ [PARAMS CHANGED]
+   'void OnData(int id)'
+      -> remove override
+      + 'void OnData(int id, double timestamp) override'
+
+   ✨ [NEW IN BASE]
+   + 'void OnError(int err_code) override'
+
+=================================================
+Summary
+=================================================
+Files Scanned     : 2
+Files Modified    : 2
+Overrides Removed : 4
+Stubs Added       : 3
