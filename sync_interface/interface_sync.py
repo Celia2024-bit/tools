@@ -7,6 +7,27 @@ from clang import cindex
 
 from logger import Logger
 
+def cleanup_old_logs():
+
+    current_dir = Path.cwd()
+
+    for log_file in current_dir.glob("*.log"):
+
+        try:
+
+            log_file.unlink()
+
+            print(
+                f"Removed old log: {log_file.name}"
+            )
+
+        except Exception as ex:
+
+            print(
+                f"Failed to remove "
+                f"{log_file}: {ex}"
+            )
+
 
 def build_signature(node):
 
@@ -443,6 +464,7 @@ def process_file(
 
 
 def main():
+    cleanup_old_logs()
 
     parser = argparse.ArgumentParser()
 
