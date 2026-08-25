@@ -69,6 +69,69 @@ def generate_mermaid(data: dict) -> str:
     return "\n".join(lines)
 
 
+def generate_html_preview(mermaid_code: str, title: str = "State Machine Diagram") -> str:
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <!-- Embed Mermaid.js via CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {{
+            mermaid.initialize({{
+                startOnLoad: true,
+                theme: 'default',
+                securityLevel: 'loose'
+            }});
+        }});
+    </script>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f8f9fa;
+            margin: 0;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }}
+        .card {{
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            padding: 30px;
+            max-width: 90%;
+            width: 800px;
+            box-sizing: border-box;
+        }}
+        h2 {{
+            margin-top: 0;
+            color: #333333;
+            font-size: 20px;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }}
+        .mermaid {{
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>{title}</h2>
+        <div class="mermaid">
+{mermaid_code}
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+
 def main():
     parser = argparse.ArgumentParser(description="State Machine JSON -> Mermaid Diagram Converter")
     parser.add_argument("input", help="Input JSON file path")
@@ -84,8 +147,17 @@ def main():
     mermaid_code = generate_mermaid(data)
 
     if args.output:
-        Path(args.output).write_text(mermaid_code, encoding="utf-8")
+        out_path = Path(args.output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(mermaid_code, encoding="utf-8")
         print(f"✅ Mermaid diagram written to {args.output}")
+
+        # Auto-generate HTML preview next to the output file
+        html_path = out_path.with_suffix(".html")
+        prefix = data.get("prefix", "State Machine")
+        html_content = generate_html_preview(mermaid_code, title=f"{prefix} State Machine Diagram")
+        html_path.write_text(html_content, encoding="utf-8")
+        print(f"✅ HTML preview written to {html_path}")
     else:
         print("\n" + mermaid_code)
 
