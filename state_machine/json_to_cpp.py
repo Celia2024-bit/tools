@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
 State Machine JSON -> C++ Code Generator using Jinja2 Templates
+
+Usage:
+    # Generates C++ files into default directory ./out/code
+    python3 json_to_cpp.py ./out/state_machine.json
+
+    # Custom output directory
+    python3 json_to_cpp.py ./out/state_machine.json -o ./generated_src
 """
 import argparse
 import json
@@ -10,14 +17,15 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 
 
-def load_json(json_path: str) -> dict:
-    path = Path(json_path)
-    if not path.exists():
+def load_json(json_path: Path) -> dict:
+    """Load and parse JSON file from path."""
+    if not json_path.exists():
         raise FileNotFoundError(f"JSON file not found: {json_path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(json_path.read_text(encoding="utf-8"))
 
 
 def parse_existing_events(event_h_path: Path) -> set:
+    """Extract existing enum values from an existing event.h file to prevent duplicate definitions."""
     if not event_h_path.exists():
         return set()
 
@@ -31,6 +39,7 @@ def parse_existing_events(event_h_path: Path) -> set:
 
 
 def prepare_context(data: dict, prefix: str, existing_events: set) -> dict:
+    """Build the context dictionary passed to Jinja2 templates."""
     states = data.get("states", [])
     transitions = data.get("transitions", [])
     initial_state = data.get("initial_state", states[0]["name"] if states else "Idle")
@@ -42,7 +51,7 @@ def prepare_context(data: dict, prefix: str, existing_events: set) -> dict:
     all_events = sorted(list(existing_events | json_events))
 
     return {
-        "prefix": prefix,  # 确保这里使用的是确定的字符串，绝不为 None
+        "prefix": prefix,
         "initial_state": initial_state,
         "states": states,
         "transitions": transitions,
@@ -58,24 +67,29 @@ def main():
     parser.add_argument("input", help="Path to input JSON file")
     parser.add_argument("-p", "--prefix", default=None, help="Prefix for class names (overrides JSON config)")
     parser.add_argument("-t", "--template-dir", default="./templates", help="Directory containing Jinja2 templates")
-    parser.add_argument("-o", "--output-dir", default=".", help="Directory to save generated C++ files")
+    parser.add_argument("-o", "--output-dir", default="./out/code", help="Directory to save generated C++ files (defaults to ./out/code)")
     args = parser.parse_args()
 
-    try:
-        data = load_json(args.input)
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"❌ File not found: {args.input}", file=sys.stderr)
+        sys.exit(1)
 
-        # 1. 优先使用命令行 -p 传入的值
-        # 2. 其次读取 JSON 里的 "prefix"
-        # 3. 若都没有，回退使用 "Order" 兜底
+    try:
+        data = load_json(input_path)
+
+        # 1. Command-line argument -p takes highest precedence
+        # 2. Fall back to JSON "prefix" field
+        # 3. Fall back to "Order" as default
         target_prefix = args.prefix or data.get("prefix") or "Order"
 
+        # Output directory defaults to ./out/code
         out_dir = Path(args.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
         event_h_path = out_dir / "event.h"
         existing_events = parse_existing_events(event_h_path)
 
-        # 把明确计算出来的 target_prefix 传入
         context = prepare_context(data, target_prefix, existing_events)
 
         env = Environment(

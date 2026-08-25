@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-State Machine JSON -> Mermaid Diagram Converter Tool (with HTML Inline Styling)
+State Machine JSON -> Mermaid Diagram & HTML Preview Generator
+
+Converts state machine definitions in JSON format into both Mermaid diagram (.mmd)
+files and standalone HTML preview (.html) files with custom inline styling.
 
 Usage:
-    python3 json_to_mermaid.py state_machine_2.json -o state_machine.mmd
+    # Auto-generates input_file.mmd and input_file.html in the same directory
+    python3 json_to_mermaid.py state_machine.json
+
+    # Custom output paths for MMD and HTML files
+    python3 json_to_mermaid.py state_machine.json -om ./out/flow.mmd -oh ./out/flow.html
 """
 import argparse
 import json
@@ -12,30 +19,38 @@ from pathlib import Path
 
 
 def generate_mermaid(data: dict) -> str:
+    """
+    Parses JSON state machine data and generates a Mermaid stateDiagram-v2 string.
+    
+    Applies HTML inline font styling for transition labels (events, guards, actions)
+    and classDef directives for state node coloring.
+    """
     lines = ["stateDiagram-v2"]
 
     states = data.get("states", [])
     transitions = data.get("transitions", [])
     initial_state = data.get("initial_state")
 
-    # 1. Entry point
+    # 1. Entry point definition
     if initial_state:
         lines.append(f"    [*] --> {initial_state}")
 
-    # 2. Transitions with styled HTML inline elements
+    # 2. Process transitions with styled HTML inline elements
     for t in transitions:
         from_state = t.get("from")
         to_state = t.get("to")
-        
+        if not from_state or not to_state:
+            continue
+
         parts = []
         if t.get("event"):
-            # Blue for Event
+            # Blue color styling for Event
             parts.append(f"<font color='#0277bd'><b>{t['event']}</b></font>")
         if t.get("guard"):
-            # Purple/Magenta for Guard
+            # Purple/Magenta color styling for Guard condition
             parts.append(f"<font color='#8e24aa'>[{t['guard']}]</font>")
         if t.get("action"):
-            # Dark Orange for Action
+            # Dark Orange color styling for Action execution
             parts.append(f"<font color='#e65100'>/ {t['action']}</font>")
 
         label = " ".join(parts).strip()
@@ -44,14 +59,14 @@ def generate_mermaid(data: dict) -> str:
         else:
             lines.append(f"    {from_state} --> {to_state}")
 
-    # 3. Exit points for final states
+    # 3. Exit points for terminal/final states
     final_states = [s["name"] for s in states if s.get("type") == "final"]
     for fs in final_states:
         lines.append(f"    {fs} --> [*]")
 
     lines.append("")
 
-    # 4. State Node Colors
+    # 4. Define and assign CSS color styles for state nodes
     initial_names = [s["name"] for s in states if s.get("type") == "initial"]
     for name in initial_names:
         lines.append("    classDef initialStyle fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;")
@@ -70,20 +85,25 @@ def generate_mermaid(data: dict) -> str:
 
 
 def generate_html_preview(mermaid_code: str, title: str = "State Machine Diagram") -> str:
+    """
+    Wraps the generated Mermaid syntax into a standalone HTML template.
+    
+    Includes Mermaid.js from CDN with 'loose' security level to enable HTML label parsing.
+    """
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{title}</title>
-    <!-- Embed Mermaid.js via CDN -->
+    <!-- Embed Mermaid.js library via CDN -->
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <script>
         document.addEventListener("DOMContentLoaded", function() {{
             mermaid.initialize({{
                 startOnLoad: true,
                 theme: 'default',
-                securityLevel: 'loose'
+                securityLevel: 'loose'  // Required to parse inline HTML tags (<font>) inside labels
             }});
         }});
     </script>
@@ -133,9 +153,10 @@ def generate_html_preview(mermaid_code: str, title: str = "State Machine Diagram
 
 
 def main():
-    parser = argparse.ArgumentParser(description="State Machine JSON -> Mermaid Diagram Converter")
+    parser = argparse.ArgumentParser(description="State Machine JSON -> Mermaid Diagram & HTML Preview Generator")
     parser.add_argument("input", help="Input JSON file path")
-    parser.add_argument("-o", "--output", help="Output Mermaid (.mmd / .md) file path")
+    parser.add_argument("-om", "--output-mmd", help="Output Mermaid (.mmd) file path")
+    parser.add_argument("-oh", "--output-html", help="Output HTML (.html) file path")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -143,23 +164,24 @@ def main():
         print(f"❌ File not found: {args.input}")
         sys.exit(1)
 
+    # Determine output paths: default to same directory and filename with corresponding extensions
+    mmd_path = Path(args.output_mmd) if args.output_mmd else input_path.with_suffix(".mmd")
+    html_path = Path(args.output_html) if args.output_html else input_path.with_suffix(".html")
+
     data = json.loads(input_path.read_text(encoding="utf-8"))
     mermaid_code = generate_mermaid(data)
 
-    if args.output:
-        out_path = Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(mermaid_code, encoding="utf-8")
-        print(f"✅ Mermaid diagram written to {args.output}")
+    # 1. Save .mmd file
+    mmd_path.parent.mkdir(parents=True, exist_ok=True)
+    mmd_path.write_text(mermaid_code, encoding="utf-8")
+    print(f"✅ Mermaid diagram written to {mmd_path}")
 
-        # Auto-generate HTML preview next to the output file
-        html_path = out_path.with_suffix(".html")
-        prefix = data.get("prefix", "State Machine")
-        html_content = generate_html_preview(mermaid_code, title=f"{prefix} State Machine Diagram")
-        html_path.write_text(html_content, encoding="utf-8")
-        print(f"✅ HTML preview written to {html_path}")
-    else:
-        print("\n" + mermaid_code)
+    # 2. Save .html preview file
+    prefix = data.get("prefix", "State Machine")
+    html_content = generate_html_preview(mermaid_code, title=f"{prefix} State Machine Diagram")
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+    html_path.write_text(html_content, encoding="utf-8")
+    print(f"✅ HTML preview written to {html_path}")
 
 
 if __name__ == "__main__":

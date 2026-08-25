@@ -3,14 +3,11 @@
 State Machine Markdown Table -> JSON Converter
 
 Usage:
-    python3 table_to_json.py state_machine.md -o state_machine.json
+    # Auto-generates ./out/state_machine.json
+    python3 table_to_json.py state_machine.md
 
-Input file format (.md or .txt):
-    Sections introduced by headings followed by markdown tables or key-value lists:
-      - "## Config"
-      - "## Context Definition Table"
-      - "## State Definition Table"
-      - "## State Transition Table"
+    # Specify a custom output path
+    python3 table_to_json.py state_machine.md -o ./custom/path.json
 """
 import argparse
 import json
@@ -269,17 +266,28 @@ def build_json(states: list, transitions: list, prefix: str, contexts: list) -> 
 
 def main():
     parser = argparse.ArgumentParser(description="State Machine Markdown Table -> JSON Converter")
-    parser.add_argument("input", help="Input file (.md or .txt)")
-    parser.add_argument("-o", "--output", default="state_machine.json", help="Output JSON path")
+    parser.add_argument("input", help="Input file path (.md or .txt)")
+    parser.add_argument("-o", "--output", help="Output JSON path (defaults to ./out/<input_name>.json)")
     parser.add_argument("--force", action="store_true", help="Generate JSON even if error-level issues are found")
     args = parser.parse_args()
 
-    config = load_config(args.input)
-    prefix = config.get("prefix", "Order")
-    contexts = load_contexts(args.input)
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"❌ Input file not found: {args.input}")
+        sys.exit(1)
 
-    states = load_states(args.input)
-    transitions = load_transitions(args.input)
+    # Output defaults to ./out/<input_name>.json
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        output_path = Path("./out") / input_path.with_suffix(".json").name
+
+    config = load_config(str(input_path))
+    prefix = config.get("prefix", "Order")
+    contexts = load_contexts(str(input_path))
+
+    states = load_states(str(input_path))
+    transitions = load_transitions(str(input_path))
 
     issues = validate(states, transitions)
     errors = [m for lvl, m in issues if lvl == "error"]
@@ -301,11 +309,14 @@ def main():
             print(f"\n{len(errors)} error(s), but --force was used, generating JSON anyway.")
 
     result = build_json(states, transitions, prefix, contexts)
-    Path(args.output).write_text(
+    
+    # Ensure ./out directory exists and write JSON
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    print(f"\nDone: {args.output}")
+    print(f"\nDone: {output_path.resolve()}")
     print(f"   prefix: {prefix}, contexts: {len(contexts)}, states: {len(result['states'])}, transitions: {len(result['transitions'])}")
 
 
