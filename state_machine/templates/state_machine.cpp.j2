@@ -1,0 +1,33 @@
+#include "{{ prefix }}StateMachine.h"
+
+{{ prefix }}StateMachine::{{ prefix }}StateMachine() {
+    m_transitions = {
+{% for t in transitions %}
+        { State::{{ t.from }}, Event::{{ t.event }}, {% if t.guard %}&{{ prefix }}Handler::{{ t.guard }}{% else %}nullptr{% endif %}, State::{{ t.to }}, {% if t.action %}&{{ prefix }}Handler::{{ t.action }}{% else %}nullptr{% endif %} }{% if not loop.last %},{% endif %}
+
+{% endfor %}
+    };
+}
+
+bool {{ prefix }}StateMachine::ProcessTransition(Event event, const EventData& data) {
+    for (const auto& trans : m_transitions) {
+        if (trans.fromState == m_currentState && trans.event == event) {
+            
+            if (trans.guard != nullptr) {
+                if (!(m_handler.*(trans.guard))(event, data)) {
+                    continue;
+                }
+            }
+
+            m_currentState = trans.toState;
+
+            if (trans.action != nullptr) {
+                (m_handler.*(trans.action))(event, data);
+            }
+
+            return true;
+        }
+    }
+
+    return false;
+}

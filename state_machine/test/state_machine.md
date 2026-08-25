@@ -2,6 +2,18 @@
 
 > Describing state machine via Markdown tables. Edit directly with Notepad / VSCode; `|` is the separator.
 
+## Config
+- **prefix**: Order
+
+## Context Definition Table
+
+| **context_name** | **field_type** | **field_name** | **description** |
+| ---------------- | -------------- | -------------- | --------------- |
+| OrderContext     | int            | orderId        | Order ID        |
+| OrderContext     | double         | amount         | Transaction amt |
+| OrderContext     | std::string    | reason         | Refund reason   |
+
+
 ## State Definition Table
 
 | **id** | **name**       | **type** | **description**                                      |

@@ -1,0 +1,18 @@
+#include "{{ prefix }}Handler.h"
+#include <iostream>
+
+// --- Guards ---
+{% for guard in guards %}
+bool {{ prefix }}Handler::{{ guard }}(Event event, const EventData& data) const {
+    // TODO: 
+    return true;
+}
+{% endfor %}
+
+// --- Actions ---
+{% for action in actions %}
+void {{ prefix }}Handler::{{ action }}(Event event, const EventData& data) {
+    // TODO: 
+    std::cout << "[Action] Executing {{ action }} on event...\n";
+}
+{% endfor %}

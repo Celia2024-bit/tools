@@ -1,0 +1,15 @@
+#ifndef {{ prefix | upper }}_CONTEXT_H
+#define {{ prefix | upper }}_CONTEXT_H
+
+#include <string>
+#include <vector>
+
+{% for ctx in contexts %}
+struct {{ ctx.name }} {
+{% for field in ctx.fields %}
+    {{ field.type }} {{ field.name }};
+{% endfor %}
+};
+
+{% endfor %}
+#endif // {{ prefix | upper }}_CONTEXT_H

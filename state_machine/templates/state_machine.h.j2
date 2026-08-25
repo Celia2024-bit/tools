@@ -1,0 +1,41 @@
+#ifndef {{ prefix | upper }}_STATE_MACHINE_H
+#define {{ prefix | upper }}_STATE_MACHINE_H
+
+#include "event.h"
+#include "{{ prefix }}Handler.h"
+#include <vector>
+
+enum class State {
+{% for state in states %}
+    {{ state.name }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+};
+
+class {{ prefix }}StateMachine {
+public:
+    {{ prefix }}StateMachine();
+
+    bool ProcessTransition(Event event, const EventData& data = {});
+
+    State GetCurrentState() const { return m_currentState; }
+    {{ prefix }}Handler& GetHandler() { return m_handler; }
+
+private:
+    using GuardFunc  = bool ({{ prefix }}Handler::*)(Event, const EventData&) const;
+    using ActionFunc = void ({{ prefix }}Handler::*)(Event, const EventData&);
+
+    struct Transition {
+        State fromState;
+        Event event;
+        GuardFunc guard;
+        State toState;
+        ActionFunc action;
+    };
+
+    State m_currentState{State::{{ initial_state }}};
+    {{ prefix }}Handler m_handler;
+    std::vector<Transition> m_transitions;
+};
+
+#endif // {{ prefix | upper }}_STATE_MACHINE_H

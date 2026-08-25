@@ -6,10 +6,11 @@ Usage:
     python3 table_to_json.py state_machine.md -o state_machine.json
 
 Input file format (.md or .txt):
-    Two sections, each introduced by a heading and followed by a markdown table:
-      - "## State Definition Table" (or "## 状态定义表")
-      - "## State Transition Table" (or "## 状态转移表")
-    See state_machine.md for a full example.
+    Sections introduced by headings followed by markdown tables or key-value lists:
+      - "## Config"
+      - "## Context Definition Table"
+      - "## State Definition Table"
+      - "## State Transition Table"
 """
 import argparse
 import json
@@ -18,24 +19,24 @@ from pathlib import Path
 
 STATE_COLUMNS = ["id", "name", "type", "description"]
 TRANSITION_COLUMNS = ["id", "from_state", "event", "guard", "to_state", "action", "description"]
+CONTEXT_COLUMNS = ["context_name", "field_type", "field_name", "description"]
 VALID_TYPES = {"initial", "final", "normal", ""}
 
 
 def _strip_markdown_emphasis(cell: str) -> str:
-    """Strip **bold**/*italic* markers and surrounding whitespace from a table cell."""
+    """Strip bold/italic markers and surrounding whitespace from a table cell."""
     cell = cell.strip()
     cell = cell.strip("*").strip()
     return cell
 
 
 def parse_markdown_tables(path: str) -> dict:
-    """Parse all markdown tables in a file, grouped by the nearest preceding '## Heading'.
-    Returns {heading_text: [row_dict, row_dict, ...]}"""
+    """Parse all markdown tables in a file, grouped by the nearest preceding '## Heading'."""
     text = Path(path).read_text(encoding="utf-8")
 
     sections = {}
     current_title = None
-    current_rows = []  # list[list[str]], first row is the header
+    current_rows = []
 
     def flush():
         nonlocal current_rows, current_title
@@ -54,7 +55,7 @@ def parse_markdown_tables(path: str) -> dict:
         if not line.startswith("|"):
             continue
         cells = [_strip_markdown_emphasis(c) for c in line.strip("|").split("|")]
-        if all(set(c) <= set("-: ") for c in cells):  # skip |---|---| separator rows
+        if all(set(c) <= set("-: ") for c in cells):  # Skip separator rows |---|---|
             continue
         current_rows.append(cells)
     flush()
@@ -62,18 +63,67 @@ def parse_markdown_tables(path: str) -> dict:
     return sections
 
 
-def _find_section(sections: dict, en_keyword: str, zh_keyword: str, path: str) -> str:
-    key = next((k for k in sections if en_keyword.lower() in k.lower() or zh_keyword in k), None)
+def load_config(path: str) -> dict:
+    """Parse key-value pairs under '## Config' section."""
+    text = Path(path).read_text(encoding="utf-8")
+    config = {}
+    in_config = False
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if line.startswith("## Config"):
+            in_config = True
+            continue
+        if line.startswith("## ") and in_config:
+            break
+        if in_config and line.startswith("-"):
+            parts = line.strip("- ").split(":")
+            if len(parts) >= 2:
+                key = parts[0].replace("*", "").strip()
+                val = parts[1].strip()
+                config[key] = val
+
+    return config
+
+
+def load_contexts(path: str) -> list:
+    """Parse '## Context Definition Table' into structured context objects."""
+    sections = parse_markdown_tables(path)
+    key = next((k for k in sections if "context" in k.lower()), None)
+    if not key:
+        return []
+
+    raw_rows = sections[key]
+    context_map = {}
+
+    for row in raw_rows:
+        ctx_name = row.get("context_name", "").strip()
+        f_type = row.get("field_type", "").strip()
+        f_name = row.get("field_name", "").strip()
+
+        if not ctx_name or not f_type or not f_name:
+            continue
+
+        if ctx_name not in context_map:
+            context_map[ctx_name] = []
+
+        context_map[ctx_name].append({"type": f_type, "name": f_name})
+
+    return [{"name": name, "fields": fields} for name, fields in context_map.items()]
+
+
+def _find_section(sections: dict, keyword: str, path: str) -> str:
+    key = next((k for k in sections if keyword.lower() in k.lower()), None)
     if key is None:
         raise ValueError(
-            f"Could not find a table titled with '{en_keyword}' (or '{zh_keyword}') in {path}. "
-            f"Expected a heading like '## {en_keyword}'."
+            f"Could not find a table titled with '{keyword}' in {path}. "
+            f"Expected a heading like '## {keyword}'."
         )
     return key
 
 
-def _get_section(sections: dict, en_keyword: str, zh_keyword: str, columns: list, path: str) -> list:
-    key = _find_section(sections, en_keyword, zh_keyword, path)
+def _get_section(sections: dict, keyword: str, columns: list, path: str) -> list:
+    key = _find_section(sections, keyword, path)
     rows = []
     for row in sections[key]:
         rows.append({col: row.get(col, "").strip() for col in columns})
@@ -82,7 +132,7 @@ def _get_section(sections: dict, en_keyword: str, zh_keyword: str, columns: list
 
 def load_states(path: str) -> list:
     sections = parse_markdown_tables(path)
-    rows = _get_section(sections, "State Definition", "状态定义", STATE_COLUMNS, path)
+    rows = _get_section(sections, "State Definition", STATE_COLUMNS, path)
     for row in rows:
         row["type"] = (row["type"] or "normal").lower()
     return rows
@@ -90,14 +140,14 @@ def load_states(path: str) -> list:
 
 def load_transitions(path: str) -> list:
     sections = parse_markdown_tables(path)
-    return _get_section(sections, "State Transition", "状态转移", TRANSITION_COLUMNS, path)
+    return _get_section(sections, "State Transition", TRANSITION_COLUMNS, path)
 
 
 def validate(states: list, transitions: list) -> list:
-    """Returns a list of (level, message). level='error' blocks generation, 'warning' is informational only."""
+    """Returns a list of (level, message) tuples for validation checks."""
     issues = []
 
-    # ---- State definition table checks ----
+    # State definition table checks
     for i, row in enumerate(states):
         line = i + 1
         if not row["name"]:
@@ -124,11 +174,10 @@ def validate(states: list, transitions: list) -> list:
         issues.append(("error", f"[States] Multiple states with type=initial found ({names_str}); "
                                  f"only one is allowed"))
 
-    final_names = {r["name"] for r in states if r["type"] == "final"}
     normal_names = {r["name"] for r in states if r["type"] == "normal"}
     all_names = {r["name"] for r in states if r["name"]}
 
-    # ---- State transition table checks ----
+    # State transition table checks
     for i, row in enumerate(transitions):
         line = i + 1
         if not row["from_state"]:
@@ -149,21 +198,20 @@ def validate(states: list, transitions: list) -> list:
     if dup_tids:
         issues.append(("error", f"[Transitions] Duplicate id(s) found: {', '.join(sorted(dup_tids))}"))
 
-    # Dead state: a 'normal' state with no outgoing transition is likely a mistake
-    # (it was probably meant to be 'final').
+    # Dead state checks
     states_with_outgoing = {r["from_state"] for r in transitions if r["from_state"]}
     for s in normal_names:
         if s not in states_with_outgoing:
             issues.append(("warning", f"State '{s}' (normal) has no outgoing transition. "
-                                       f"If it should be a terminal state, set its type to 'final'."))
+                                       f"Set type to 'final' if terminal."))
 
-    # Orphan state: defined but never referenced by any transition
+    # Orphan state checks
     referenced = states_with_outgoing | {r["to_state"] for r in transitions if r["to_state"]}
     for s in all_names:
         if s not in referenced:
             issues.append(("warning", f"State '{s}' is defined but never appears in any transition"))
 
-    # Conflicting transitions: same from_state+event+guard mapped to different to_state
+    # Conflicting transitions checks
     seen = {}
     for i, row in enumerate(transitions):
         line = i + 1
@@ -183,7 +231,7 @@ def validate(states: list, transitions: list) -> list:
     return issues
 
 
-def build_json(states: list, transitions: list) -> dict:
+def build_json(states: list, transitions: list, prefix: str, contexts: list) -> dict:
     initial_name = next(r["name"] for r in states if r["type"] == "initial")
 
     states_json = [{
@@ -203,11 +251,20 @@ def build_json(states: list, transitions: list) -> dict:
         "description": r["description"] or None,
     } for r in transitions if r["from_state"]]
 
-    return {
+    result = {}
+    if prefix:
+        result["prefix"] = prefix
+
+    if contexts:
+        result["contexts"] = contexts
+
+    result.update({
         "initial_state": initial_name,
         "states": states_json,
         "transitions": transitions_json,
-    }
+    })
+
+    return result
 
 
 def main():
@@ -216,6 +273,10 @@ def main():
     parser.add_argument("-o", "--output", default="state_machine.json", help="Output JSON path")
     parser.add_argument("--force", action="store_true", help="Generate JSON even if error-level issues are found")
     args = parser.parse_args()
+
+    config = load_config(args.input)
+    prefix = config.get("prefix", "Order")
+    contexts = load_contexts(args.input)
 
     states = load_states(args.input)
     transitions = load_transitions(args.input)
@@ -239,13 +300,13 @@ def main():
         else:
             print(f"\n{len(errors)} error(s), but --force was used, generating JSON anyway.")
 
-    result = build_json(states, transitions)
+    result = build_json(states, transitions, prefix, contexts)
     Path(args.output).write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     print(f"\nDone: {args.output}")
-    print(f"   states: {len(result['states'])}, transitions: {len(result['transitions'])}")
+    print(f"   prefix: {prefix}, contexts: {len(contexts)}, states: {len(result['states'])}, transitions: {len(result['transitions'])}")
 
 
 if __name__ == "__main__":

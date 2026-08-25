@@ -1,0 +1,13 @@
+#ifndef EVENT_H
+#define EVENT_H
+
+#include <any>
+enum class Event {
+{% for event in events %}
+    {{ event }}{% if not loop.last %},{% endif %}
+
+{% endfor %}
+};
+
+using EventData = std::any;
+#endif // EVENT_H

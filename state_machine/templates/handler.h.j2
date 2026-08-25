@@ -1,0 +1,22 @@
+#ifndef {{ prefix | upper }}_HANDLER_H
+#define {{ prefix | upper }}_HANDLER_H
+
+#include "event.h"
+#include "{{ prefix }}Context.h"
+
+class {{ prefix }}Handler {
+public:
+    {{ prefix }}Handler() = default;
+
+    // --- Guards ---
+{% for guard in guards %}
+    bool {{ guard }}(Event event, const EventData& data) const;
+{% endfor %}
+
+    // --- Actions ---
+{% for action in actions %}
+    void {{ action }}(Event event, const EventData& data);
+{% endfor %}
+};
+
+#endif // {{ prefix | upper }}_HANDLER_H
