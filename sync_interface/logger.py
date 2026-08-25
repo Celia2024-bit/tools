@@ -1,24 +1,21 @@
-from datetime import datetime
+# logger.py
 
+from datetime import datetime
 
 class Logger:
 
-    def __init__(self, file_name=None):
+    def __init__(self):
 
-        if file_name is None:
+        timestamp = datetime.now().strftime(
+            "%Y%m%d_%H%M%S"
+        )
 
-            timestamp = datetime.now().strftime(
-                "%Y%m%d_%H%M%S"
-            )
-
-            file_name = (
-                f"interface_sync_{timestamp}.log"
-            )
-
-        self.file_name = file_name
+        self.log_file = (
+            f"interface_sync_{timestamp}.log"
+        )
 
         self.fp = open(
-            file_name,
+            self.log_file,
             "w",
             encoding="utf-8"
         )
@@ -34,5 +31,4 @@ class Logger:
 
     def close(self):
 
-        if self.fp:
-            self.fp.close()
+        self.fp.close()

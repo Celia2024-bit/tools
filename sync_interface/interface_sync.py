@@ -2,14 +2,11 @@
 
 import argparse
 from pathlib import Path
+
 from clang import cindex
 
 from logger import Logger
 
-
-# ==========================================================
-# AST
-# ==========================================================
 
 def build_signature(node):
 
@@ -28,17 +25,16 @@ def build_signature(node):
     )
 
 
-def extract_interface(header_file):
+def extract_interface(
+    header_file,
+    clang_args
+):
 
     index = cindex.Index.create()
 
     tu = index.parse(
         header_file,
-        args=[
-            "-x",
-            "c++",
-            "-std=c++17"
-        ]
+        args=clang_args
     )
 
     result = {}
@@ -93,19 +89,23 @@ def compare_interfaces(
     old_names = set(old_api.keys())
     new_names = set(new_api.keys())
 
-    for name in sorted(old_names - new_names):
-
+    for name in sorted(
+        old_names - new_names
+    ):
         changes["deleted"].append(
             old_api[name]
         )
 
-    for name in sorted(new_names - old_names):
-
+    for name in sorted(
+        new_names - old_names
+    ):
         changes["added"].append(
             new_api[name]
         )
 
-    for name in sorted(old_names & new_names):
+    for name in sorted(
+        old_names & new_names
+    ):
 
         old_item = old_api[name]
         new_item = new_api[name]
@@ -121,8 +121,12 @@ def compare_interfaces(
         ):
 
             changes["changed"].append({
-                "old": old_item,
-                "new": new_item
+
+                "old":
+                    old_item,
+
+                "new":
+                    new_item
             })
 
     return changes
@@ -141,20 +145,42 @@ def is_derived_from(
             cindex.CursorKind.CXX_BASE_SPECIFIER
         ):
 
-            if child.spelling == interface_name:
+            if (
+                child.spelling
+                ==
+                interface_name
+            ):
                 return True
 
     return False
 
 
-# ==========================================================
-# Rewrite
-# ==========================================================
+def contains_derived_class(
+    tu,
+    interface_name
+):
+
+    for node in tu.cursor.walk_preorder():
+
+        if (
+            node.kind
+            ==
+            cindex.CursorKind.CLASS_DECL
+        ):
+
+            if is_derived_from(
+                node,
+                interface_name
+            ):
+                return True
+
+    return False
+
 
 def remove_override_lines(
     lines,
     tu,
-    target_methods
+    target_names
 ):
 
     modified = False
@@ -168,7 +194,7 @@ def remove_override_lines(
         ):
             continue
 
-        if node.spelling not in target_methods:
+        if node.spelling not in target_names:
             continue
 
         for token in node.get_tokens():
@@ -176,23 +202,21 @@ def remove_override_lines(
             if token.spelling != "override":
                 continue
 
-            line_no = (
-                token.location.line
-            )
+            line_no = token.location.line
 
             idx = line_no - 1
 
-            old_line = lines[idx]
+            original = lines[idx]
 
-            new_line = (
-                old_line
+            updated = (
+                original
                 .replace(" override", "")
                 .replace("override ", "")
             )
 
-            if old_line != new_line:
+            if updated != original:
 
-                lines[idx] = new_line
+                lines[idx] = updated
 
                 modified = True
 
@@ -204,21 +228,33 @@ def append_stub(
     signature
 ):
 
-    stub = (
-        f"    {signature} override;\n"
+    func_name = (
+        signature
+        .split("(")[0]
+        .split()[-1]
     )
 
     #
-    # 防止重复追加
+    # prevent duplicate stub
     #
-    for line in lines:
+    def append_stub(
+        lines,
+        signature
+    ):
 
-        if (
-            signature in line
-            and
-            "override" in line
-        ):
-            return False
+        stub_line = (
+            f"    {signature} override;"
+        )
+
+        for line in lines:
+
+            if (
+                line.strip()
+                ==
+                stub_line.strip()
+            ):
+                return False
+
 
     insert_pos = None
 
@@ -238,63 +274,39 @@ def append_stub(
 
     lines.insert(
         insert_pos,
-        stub
+        f"    {signature} override;\n"
     )
 
     return True
 
-
-# ==========================================================
-# Per File
-# ==========================================================
 
 def process_file(
     file_path,
     interface_name,
     changes,
     logger,
-    stats
+    stats,
+    clang_args
 ):
 
     index = cindex.Index.create()
 
     tu = index.parse(
         file_path,
-        args=[
-            "-x",
-            "c++",
-            "-std=c++17",
-            f"-I{Path(file_path).parent}"
-        ]
+        args=clang_args
     )
 
-    derived = False
-
-    for node in tu.cursor.walk_preorder():
-
-        if (
-            node.kind
-            ==
-            cindex.CursorKind.CLASS_DECL
-        ):
-
-            if is_derived_from(
-                node,
-                interface_name
-            ):
-
-                derived = True
-                break
-
-    if not derived:
+    if not contains_derived_class(
+        tu,
+        interface_name
+    ):
         return
 
-    stats["files_scanned"] += 1
+    stats["derived_classes"] += 1
 
     logger.log()
     logger.log(
-        f"⚙️ Inspecting Derived Class file: "
-        f"{file_path}..."
+        f"⚙️ Inspecting Derived Class file: {file_path}..."
     )
 
     lines = Path(
@@ -430,10 +442,6 @@ def process_file(
         )
 
 
-# ==========================================================
-# Main
-# ==========================================================
-
 def main():
 
     parser = argparse.ArgumentParser()
@@ -455,21 +463,63 @@ def main():
 
     args = parser.parse_args()
 
+    include_dir = str(
+        Path(args.new).parent
+    )
+
+    clang_args = [
+
+        "-x",
+        "c++",
+
+        "-std=c++17",
+
+        f"-I{include_dir}"
+    ]
+
     logger = Logger()
 
-    stats = {
-        "files_scanned": 0,
-        "files_modified": 0,
-        "override_removed": 0,
-        "stubs_added": 0
-    }
+    interface_name = (
+        Path(args.new).stem
+    )
+
+    logger.log(
+        "========================================================="
+    )
+    logger.log(
+        "Interface Sync"
+    )
+    logger.log(
+        "========================================================="
+    )
+    logger.log()
+
+    logger.log(
+        f"Base Interface : {interface_name}"
+    )
+
+    logger.log(
+        f"Root Directory : {args.src}"
+    )
+
+    logger.log(
+        f"Include Path   : {include_dir}"
+    )
+
+    logger.log(
+        f"Log File       : {logger.log_file}"
+    )
+
+    logger.log()
 
     old_api = extract_interface(
-        args.old
+        args.old,
+        clang_args
     )
 
     new_api = extract_interface(
-        args.new
+        args.new,
+        clang_args
     )
 
     changes = compare_interfaces(
@@ -477,57 +527,79 @@ def main():
         new_api
     )
 
-    interface_name = (
-        Path(args.new).stem
+    headers = list(
+        Path(args.src).rglob("*.h")
     )
 
-    for file in Path(
-        args.src
-    ).rglob("*.h"):
+    logger.log(
+        f"Discovered Headers : {len(headers)}"
+    )
 
-        if file.name in [
-            Path(args.old).name,
-            Path(args.new).name
-        ]:
-            continue
+    stats = {
+
+        "headers_found":
+            len(headers),
+
+        "derived_classes":
+            0,
+
+        "files_modified":
+            0,
+
+        "override_removed":
+            0,
+
+        "stubs_added":
+            0
+    }
+
+    for file in headers:
 
         process_file(
             str(file),
             interface_name,
             changes,
             logger,
-            stats
+            stats,
+            clang_args
         )
 
     logger.log()
     logger.log(
-        "================================================="
-    )
-
-    logger.log("Summary")
-
-    logger.log(
-        "================================================="
+        "========================================================="
     )
 
     logger.log(
-        f"Files Scanned     : "
-        f"{stats['files_scanned']}"
+        "Summary"
     )
 
     logger.log(
-        f"Files Modified    : "
-        f"{stats['files_modified']}"
+        "========================================================="
     )
 
     logger.log(
-        f"Overrides Removed : "
-        f"{stats['override_removed']}"
+        f"Headers Found     : {stats['headers_found']}"
     )
 
     logger.log(
-        f"Stubs Added       : "
-        f"{stats['stubs_added']}"
+        f"Derived Classes   : {stats['derived_classes']}"
+    )
+
+    logger.log(
+        f"Files Modified    : {stats['files_modified']}"
+    )
+
+    logger.log(
+        f"Overrides Removed : {stats['override_removed']}"
+    )
+
+    logger.log(
+        f"Stubs Added       : {stats['stubs_added']}"
+    )
+
+    logger.log()
+    logger.log(
+        f"Log written to: {logger.log_file}"
     )
 
     logger.close()
