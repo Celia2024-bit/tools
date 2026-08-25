@@ -7,6 +7,7 @@
 class LoggerObserver : public IObserver
 {
 public:
-    void OnConnected() override ;
+
+    void OnConnected() override;
     void OnData(int id) override;
 };
