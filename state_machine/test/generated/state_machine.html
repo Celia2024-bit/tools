@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order State Machine Diagram</title>
+    <!-- Embed Mermaid.js library via CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            mermaid.initialize({
+                startOnLoad: true,
+                theme: 'default',
+                securityLevel: 'loose'  // Required to parse inline HTML tags (<font>) inside labels
+            });
+        });
+    </script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f8f9fa;
+            margin: 0;
+            padding: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .card {
+            background: #ffffff;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            padding: 30px;
+            max-width: 90%;
+            width: 800px;
+            box-sizing: border-box;
+        }
+        h2 {
+            margin-top: 0;
+            color: #333333;
+            font-size: 20px;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }
+        .mermaid {
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>Order State Machine Diagram</h2>
+        <div class="mermaid">
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> PendingPayment : <font color='#0277bd'><b>CreateOrder</b></font>
+    PendingPayment --> Paid : <font color='#0277bd'><b>PaySuccess</b></font> <font color='#e65100'>/ SendPaymentNotification</font>
+    PendingPayment --> Cancelled : <font color='#0277bd'><b>PayTimeout</b></font>
+    Paid --> Shipped : <font color='#0277bd'><b>Ship</b></font>
+    Shipped --> Completed : <font color='#0277bd'><b>ConfirmReceipt</b></font>
+    Shipped --> Completed : <font color='#0277bd'><b>AutoConfirmTimeout</b></font> <font color='#e65100'>/ AutoConfirmReceipt</font>
+    Paid --> Cancelled : <font color='#0277bd'><b>ApplyRefund</b></font> <font color='#8e24aa'>[AmountLte100]</font> <font color='#e65100'>/ AutoRefund</font>
+    Paid --> PendingAudit : <font color='#0277bd'><b>ApplyRefund</b></font> <font color='#8e24aa'>[AmountGt100]</font> <font color='#e65100'>/ TransferToManualAudit</font>
+    PendingAudit --> Cancelled : <font color='#0277bd'><b>AuditPass</b></font> <font color='#e65100'>/ RefundToAccount</font>
+    Completed --> [*]
+    Cancelled --> [*]
+
+    classDef initialStyle fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    class Idle initialStyle
+    classDef normalStyle fill:#f0f4c3,stroke:#afb42b,stroke-width:1px;
+    class PendingPayment, Paid, Shipped, PendingAudit normalStyle
+    classDef finalStyle fill:#ffebee,stroke:#e53935,stroke-width:2px;
+    class Completed, Cancelled finalStyle
+        </div>
+    </div>
+</body>
+</html>
