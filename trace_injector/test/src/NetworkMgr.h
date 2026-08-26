@@ -7,4 +7,6 @@ public:
     void Connect();
 
     void Disconnect();
+    
+    void Run();
 };
