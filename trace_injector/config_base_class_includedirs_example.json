@@ -1,0 +1,14 @@
+{
+    "inject": [
+        {
+            "directory": "test/proj/src",
+            "file": "",
+            "base_class": "IExecutor",
+            "function": "Execute"
+        }
+    ],
+
+    "include_dirs": [
+        "test/proj/include"
+    ]
+}
