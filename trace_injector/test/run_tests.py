@@ -1,15 +1,35 @@
 #!/usr/bin/env python3
 """
-Scenario tests for the base_class / include_dirs targeting modes.
+The regression check for trace_injector. Change anything, then run:
 
     python test/run_tests.py
 
-Each scenario runs a real rule against the fixture trees, asserts exactly
-which functions were touched, then restores the fixtures. The expected sets
-are exact, so a class that must NOT match (NetworkMgr::Run, LocalCache::
-Execute) is asserted by its absence.
+Exit code 0 means nothing that used to work is broken. No arguments, no
+environment setup, no network — it finds libclang itself and puts the
+fixture trees back exactly as it found them.
 
-If libclang.dll is not on the DLL search path, point at it explicitly:
+Three parts, in order:
+
+  1. SCENARIOS      - real rules against the fixture trees under test/,
+                      asserting the exact set of functions touched. The
+                      expected sets are exact, so a class that must NOT
+                      match (NetworkMgr::Run, LocalCache::Execute) is
+                      asserted by its absence.
+
+  2. SELF_CHECKS    - breaks the tool on purpose and confirms part 1
+                      notices. A green suite only means something if it
+                      can go red; these guard against an assertion
+                      quietly becoming vacuous.
+
+  3. fixture audit  - the fixtures must be trace-free before and after,
+                      byte for byte. Otherwise part 1 was measuring
+                      leftovers from the previous run.
+
+Adding a scenario: append to SCENARIOS. Keys are documented above the
+list. If your change makes an existing scenario fail, that is the point
+of this file — read the diff it prints before editing the expectation.
+
+If libclang cannot be found automatically, point at it:
 
     TRACE_INJECTOR_LIBCLANG=C:/Python/Lib/site-packages/clang/native/libclang.dll \
         python test/run_tests.py
@@ -29,23 +49,91 @@ sys.stdout.reconfigure(
     errors="replace"
 )
 
-_LIBCLANG = os.environ.get(
-    "TRACE_INJECTOR_LIBCLANG",
-    ""
-)
 
-if _LIBCLANG:
+#
+# ---------------------------------------------------------------- libclang
+#
+# The clang python bindings load libclang through the OS loader, which does
+# not look inside site-packages. Finding it here rather than making every
+# caller export a variable is the difference between "run this file" and
+# "run this file after reading the README".
+#
+def libclang_candidates():
+
+    import clang
+
+    names = {
+        "win32": "libclang.dll",
+        "darwin": "libclang.dylib"
+    }
+
+    name = names.get(sys.platform, "libclang.so")
+
+    yield Path(clang.__file__).parent / "native" / name
+
+    for base in (
+        Path(sys.prefix),
+        Path(sys.prefix) / "Library",
+        Path("C:/Program Files/LLVM"),
+        Path("/usr/lib/llvm-14"),
+        Path("/usr/lib"),
+        Path("/usr/local/lib"),
+        Path("/opt/homebrew/lib")
+    ):
+        yield base / "bin" / name
+        yield base / "lib" / name
+        yield base / name
+
+
+def configure_libclang():
+    """Returns the path in use, or None if the default loader already works."""
 
     from clang import cindex
 
-    cindex.Config.set_library_file(_LIBCLANG)
+    explicit = os.environ.get(
+        "TRACE_INJECTOR_LIBCLANG",
+        ""
+    )
 
+    if explicit:
+        cindex.Config.set_library_file(explicit)
+        return explicit
+
+    try:
+        cindex.Index.create()
+        return None
+    except cindex.LibclangError:
+        pass
+
+    for candidate in libclang_candidates():
+
+        if not candidate.is_file():
+            continue
+
+        cindex.Config.set_library_file(str(candidate))
+
+        try:
+            cindex.Index.create()
+            return str(candidate)
+        except cindex.LibclangError:
+            cindex.Config.loaded = False
+
+    raise SystemExit(
+        "Could not load libclang. Install it (pip install libclang) or "
+        "set TRACE_INJECTOR_LIBCLANG to the shared library."
+    )
+
+
+LIBCLANG_IN_USE = configure_libclang()
+
+from trace_injector_pkg import targets
 from trace_injector_pkg.config import load_config, resolve_mode_and_rules
 from trace_injector_pkg.processor import process_rule
 
 INJECTED_PREFIX = "   ✨ Injected: "
 REMOVED_PREFIX = "   ✨ Removed: "
 INCOMPLETE_WARNING = "Base-class matching may be incomplete"
+TRACE_MARKER = "ScopeTrace trace("
 
 #
 # Two fixture trees, on purpose:
@@ -102,6 +190,25 @@ EXECUTOR_OVERRIDES = {
     "FastExecutor::Execute"
 }
 
+#
+# Scenario keys, all optional except name and one of rule/config:
+#
+#   name                 what prints in the report
+#   rule                 the rule dict under test
+#   config               run a shipped config file instead of `rule`
+#   mode                 "inject" (default) or "remove"
+#   exclude              exclude entries passed alongside `rule`
+#   include_dirs         clang -I paths for the rule under test
+#   setup                a rule injected first, to give remove something to do
+#   setup_config         same, but from a shipped config file
+#   setup_include_dirs   clang -I paths for `setup`
+#   injected / removed   the EXACT set of qualified names expected in the log
+#   injected_count /
+#   removed_count        override the stat check, for paths that cannot name
+#                        the function they touched
+#   remaining            traces left in the fixtures afterwards
+#   warns                whether the incomplete-match warning must appear
+#
 SCENARIOS = [
     {
         "name": "same tree, relative includes, no include_dirs",
@@ -300,11 +407,17 @@ def fresh_stats():
     }
 
 
+def fixture_files():
+    return sorted(
+        HERE.rglob("*.cpp")
+    )
+
+
 def snapshot_fixtures():
 
     saved = {}
 
-    for path in HERE.rglob("*.cpp"):
+    for path in fixture_files():
         saved[path] = path.read_text(
             encoding="utf-8"
         )
@@ -327,10 +440,10 @@ def count_traces():
 
     total = 0
 
-    for path in HERE.rglob("*.cpp"):
+    for path in fixture_files():
         total += path.read_text(
             encoding="utf-8"
-        ).count("ScopeTrace trace(")
+        ).count(TRACE_MARKER)
 
     return total
 
@@ -364,6 +477,33 @@ def check_example_configs():
         except Exception as error:
             failures.append(
                 f"{config_file.name}: {error}"
+            )
+
+    return failures
+
+
+def check_fixtures_clean(saved=None):
+    """
+    The fixtures carry no traces at rest. Before the run that means the
+    previous run cleaned up after itself; after it, that this one did.
+    `saved` also demands byte equality, catching debris a trace count misses.
+    """
+
+    failures = []
+
+    for path in fixture_files():
+
+        text = path.read_text(encoding="utf-8")
+        name = path.relative_to(ROOT).as_posix()
+
+        if TRACE_MARKER in text:
+            failures.append(
+                f"{name}: {text.count(TRACE_MARKER)} leftover trace(s)"
+            )
+
+        if saved is not None and text != saved.get(path, text):
+            failures.append(
+                f"{name}: content differs from the snapshot"
             )
 
     return failures
@@ -492,60 +632,255 @@ def run_scenario(scenario):
     return failures
 
 
+def run_all_scenarios(saved, report=None):
+    """
+    Runs every scenario, restoring the fixtures around each one. Returns the
+    set of names that failed. `report` receives (name, failures) per scenario
+    when the caller wants the detail printed.
+    """
+
+    failed = set()
+
+    for scenario in SCENARIOS:
+
+        try:
+            failures = run_scenario(scenario)
+        except Exception as error:
+            failures = [f"raised {type(error).__name__}: {error}"]
+        finally:
+            restore_fixtures(saved)
+
+        if failures:
+            failed.add(scenario["name"])
+
+        if report:
+            report(scenario["name"], failures)
+
+    return failed
+
+
+#
+# ------------------------------------------------------------- self checks
+#
+# Each entry breaks the tool one way and names the scenarios that must
+# notice. `must_fail` is what makes the suite worth running; `must_pass`
+# proves the breakage was targeted rather than burning the whole thing down.
+#
+# Only the listed names are judged, so adding a scenario never invalidates a
+# self check.
+#
+def patch_remove_ignores_filters():
+    """Make every remove take the coarse whole-file path."""
+
+    from trace_injector_pkg import processor
+
+    original = processor.remove_trace_from_file
+
+    def coarse(cpp_file, logger, stats, **ignored):
+        return original(cpp_file, logger, stats)
+
+    processor.remove_trace_from_file = coarse
+
+    def undo():
+        processor.remove_trace_from_file = original
+
+    return undo
+
+
+def patch_warning_threshold():
+    """Report ordinary errors too, which fires on every already-injected file."""
+
+    from clang import cindex
+
+    original = targets.MIN_REPORTED_SEVERITY
+    targets.MIN_REPORTED_SEVERITY = cindex.Diagnostic.Error
+
+    def undo():
+        targets.MIN_REPORTED_SEVERITY = original
+
+    return undo
+
+
+def patch_example_base_class():
+    """Typo the base_class inside the shipped example configs."""
+
+    original = globals()["load_config"]
+
+    def broken(config_file):
+
+        config = original(config_file)
+
+        for rule in config.get("inject", []) + config.get("remove", []):
+            if rule.get("base_class"):
+                rule["base_class"] = "INotARealBaseClass"
+
+        return config
+
+    globals()["load_config"] = broken
+
+    def undo():
+        globals()["load_config"] = original
+
+    return undo
+
+
+SELF_CHECKS = [
+    {
+        "name": "targeted remove degraded to whole-file",
+        "patch": patch_remove_ignores_filters,
+        "must_fail": [
+            "remove: by function name only",
+            "remove: by base_class, LocalCache::Execute survives",
+            "remove: base_class with include_dirs MISSING -> warn, no writes",
+            "remove: function-level exclude keeps every Run",
+            "examples: base_class inject then remove leaves nothing"
+        ],
+        "must_pass": [
+            "remove: unfiltered rule strips the whole file"
+        ]
+    },
+    {
+        "name": "parse warning widened past fatal",
+        "patch": patch_warning_threshold,
+        "must_fail": [
+            "remove: by base_class, LocalCache::Execute survives",
+            "examples: base_class inject then remove leaves nothing"
+        ],
+        "must_pass": [
+            "separate include root, include_dirs given",
+            "separate include root, include_dirs MISSING -> warn, no writes"
+        ]
+    },
+    {
+        "name": "example config base_class typo",
+        "patch": patch_example_base_class,
+        "must_fail": [
+            "examples: base_class inject then remove leaves nothing"
+        ],
+        "must_pass": [
+            "remove: by base_class, LocalCache::Execute survives"
+        ]
+    }
+]
+
+
+def run_self_check(self_check, saved):
+
+    undo = self_check["patch"]()
+
+    try:
+        failed = run_all_scenarios(saved)
+    finally:
+        undo()
+
+    problems = []
+
+    for name in self_check["must_fail"]:
+
+        if name not in failed:
+            problems.append(
+                f"not detected by: {name}"
+            )
+
+    for name in self_check["must_pass"]:
+
+        if name in failed:
+            problems.append(
+                f"collateral damage to: {name}"
+            )
+
+    return problems
+
+
+#
+# ------------------------------------------------------------------ report
+#
+class Report:
+
+    def __init__(self):
+        self.passed = 0
+        self.failed = 0
+
+    def record(self, name, failures):
+
+        if failures:
+
+            self.failed += 1
+            print(f"FAIL  {name}")
+
+            for failure in failures:
+                print(f"      {failure}")
+
+        else:
+
+            self.passed += 1
+            print(f"pass  {name}")
+
+
 def main():
 
     os.chdir(ROOT)
 
+    if LIBCLANG_IN_USE:
+        print(f"libclang: {LIBCLANG_IN_USE}")
+        print()
+
+    report = Report()
+
+    print("-- scenarios")
+    report.record(
+        "fixtures start clean",
+        check_fixtures_clean()
+    )
+    report.record(
+        "example configs pass validation",
+        check_example_configs()
+    )
+
     saved = snapshot_fixtures()
 
-    passed = 0
-    failed = 0
+    try:
+        run_all_scenarios(saved, report=report.record)
+    finally:
+        restore_fixtures(saved)
 
-    example_failures = check_example_configs()
+    #
+    # Skipped when the suite is already red: a self check asserts which
+    # scenarios fail, so it can only be read against a green baseline.
+    #
+    print()
 
-    if example_failures:
+    if report.failed:
 
-        failed += 1
-        print("FAIL  example configs pass validation")
-
-        for failure in example_failures:
-            print(f"      {failure}")
+        print(
+            f"-- self checks skipped, {report.failed} scenario(s) already "
+            "failing"
+        )
 
     else:
 
-        passed += 1
-        print("pass  example configs pass validation")
+        print("-- self checks (breaking the tool on purpose)")
 
-    try:
+        try:
+            for self_check in SELF_CHECKS:
+                report.record(
+                    self_check["name"],
+                    run_self_check(self_check, saved)
+                )
+        finally:
+            restore_fixtures(saved)
 
-        for scenario in SCENARIOS:
-
-            try:
-                failures = run_scenario(scenario)
-            finally:
-                restore_fixtures(saved)
-
-            if failures:
-
-                failed += 1
-                print(f"FAIL  {scenario['name']}")
-
-                for failure in failures:
-                    print(f"      {failure}")
-
-            else:
-
-                passed += 1
-                print(f"pass  {scenario['name']}")
-
-    finally:
-
-        restore_fixtures(saved)
+        print()
+        print("-- cleanup")
+        report.record(
+            "fixtures restored byte for byte",
+            check_fixtures_clean(saved)
+        )
 
     print()
-    print(f"{passed} passed, {failed} failed")
+    print(f"{report.passed} passed, {report.failed} failed")
 
-    return 1 if failed else 0
+    return 1 if report.failed else 0
 
 
 if __name__ == "__main__":

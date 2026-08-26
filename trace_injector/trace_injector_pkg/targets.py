@@ -11,6 +11,11 @@ from .file_discovery import match_function
 
 MAX_REPORTED_DIAGNOSTICS = 3
 
+#
+# Fatal only. See log_parse_problems for why lowering this cries wolf.
+#
+MIN_REPORTED_SEVERITY = cindex.Diagnostic.Fatal
+
 FUNCTION_KINDS = (
     cindex.CursorKind.CXX_METHOD,
     cindex.CursorKind.FUNCTION_DECL
@@ -63,7 +68,7 @@ def log_parse_problems(tu, logger):
 
     for diagnostic in tu.diagnostics:
 
-        if diagnostic.severity < cindex.Diagnostic.Fatal:
+        if diagnostic.severity < MIN_REPORTED_SEVERITY:
             continue
 
         if reported >= MAX_REPORTED_DIAGNOSTICS:

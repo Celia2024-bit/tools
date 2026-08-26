@@ -173,15 +173,33 @@ Echoing that would train you to ignore the warning that matters.
 
 ## Tests
 
+Change anything, then run this. Exit code 0 means nothing that used to work
+is broken.
+
 ```
 python test/run_tests.py
 ```
 
-Runs each rule against the fixture trees and asserts the exact set of
-functions that received (or lost) a trace, then restores the fixtures.
-Because the expected sets are exact, the classes that must NOT match are
-asserted by their absence — `NetworkMgr::Run` (same method name, unrelated
-class) and `LocalCache::Execute` (same method name, no base class).
+No arguments and no environment setup — it locates libclang itself and puts
+the fixture trees back exactly as it found them. Three parts:
+
+**1. Scenarios.** Each runs a real rule against the fixture trees and
+asserts the exact set of functions that received (or lost) a trace. Because
+the expected sets are exact, the classes that must NOT match are asserted by
+their absence — `NetworkMgr::Run` (same method name, unrelated class) and
+`LocalCache::Execute` (same method name, no base class). Two of them run the
+shipped example configs for real rather than a copy of their rules.
+
+**2. Self checks.** Breaks the tool on purpose three ways — degrade targeted
+remove to the whole-file scan, widen the parse warning past fatal, typo a
+`base_class` in an example config — and confirms the right scenarios go red
+and the others stay green. A green suite only means something if it can go
+red; this is what stops an assertion from quietly becoming vacuous. Skipped
+when part 1 is already failing, since it asserts *which* scenarios fail.
+
+**3. Fixture audit.** The fixtures must be trace-free before the run and
+byte-identical to the snapshot after it, so no result is measuring debris
+left by the previous run.
 
 Inject scenarios:
 
@@ -201,11 +219,18 @@ traces are left behind):
 - `base_class` → the overrides only, `LocalCache::Execute` survives
 - `base_class` with `include_dirs` missing → warns, removes nothing
 - function-level `exclude` → everything except the excluded `Run()`s
+- the two `base_class` example configs round-trip to zero traces
 
 Plus a guard that every shipped `config_*example*.json` still passes
 validation.
 
-If `libclang.dll` is not on the DLL search path, point at it explicitly:
+To add a scenario, append to `SCENARIOS`; the accepted keys are documented
+just above the list. If a change of yours makes an existing scenario fail,
+read the diff it prints before editing the expectation — that diff is the
+whole point of the file.
+
+Autodetection covers site-packages and the usual LLVM install dirs. If
+libclang lives somewhere else, point at it explicitly:
 
 ```
 TRACE_INJECTOR_LIBCLANG=C:/Python/Lib/site-packages/clang/native/libclang.dll \
