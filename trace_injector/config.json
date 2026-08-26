@@ -1,17 +1,9 @@
 {
-    "remove": [
+    "inject": [
         {
             "directory": "test/src",
             "file": "",
-            "function": ""
-        }
-    ],
-
-    "exclude": [
-        {
-            "directory": "test/src/strategy",
-            "file": "StrategyEngine.cpp",
-            "function": ""
+            "function": "Run"
         }
     ]
 }
