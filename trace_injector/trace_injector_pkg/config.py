@@ -18,6 +18,9 @@ def resolve_mode_and_rules(config):
     list (mutually exclusive), plus optional "exclude" and "include_dirs"
     keys.
 
+    Both modes accept the same rule fields — remove targets exactly what the
+    matching inject rule would have added.
+
     Returns (mode, rules, exclude_rules, include_dirs).
     """
 
@@ -49,26 +52,5 @@ def resolve_mode_and_rules(config):
                 "excluding works at the directory/file/function level "
                 f"only. Offending entry: {exclude_rule}"
             )
-
-    if mode == "remove":
-
-        for rule in rules:
-
-            if rule.get("base_class", ""):
-                raise ValueError(
-                    "\"remove\" entries cannot specify a \"base_class\" — "
-                    "remove strips every trace it finds in the matched "
-                    f"files. Offending entry: {rule}"
-                )
-
-        for exclude_rule in exclude_rules:
-
-            if exclude_rule.get("function", ""):
-                raise ValueError(
-                    "\"exclude\" entries cannot specify a \"function\" "
-                    "when mode is \"remove\" — remove only supports "
-                    "excluding at the directory/file level. Offending "
-                    f"entry: {exclude_rule}"
-                )
 
     return mode, rules, exclude_rules, include_dirs

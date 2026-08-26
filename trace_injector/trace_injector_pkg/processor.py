@@ -62,13 +62,14 @@ def process_rule(
 
         if mode == "remove":
 
-            # function-level excludes are rejected at config-load time
-            # for remove mode, so excluded_functions is always empty here
-
             remove_trace_from_file(
                 cpp_file,
                 logger,
-                stats
+                stats,
+                target_function=function_name,
+                target_base_class=base_class,
+                excluded_functions=excluded_functions,
+                include_dirs=include_dirs
             )
 
         else:
