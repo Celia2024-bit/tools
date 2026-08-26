@@ -11,7 +11,7 @@
         {
             "directory": "test/src/strategy",
             "file": "StrategyEngine.cpp",
-            "function": "Run"
+            "function": ""
         }
     ]
 }
