@@ -1,9 +1,11 @@
 {
+    "mode": "inject_trace",
+
     "rules": [
         {
             "directory": "test/src",
-            "file": "StrategyEngine.cpp",
-            "function": "Run"
+            "file": "",
+            "function": ""
         }
     ]
 }

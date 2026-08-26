@@ -77,6 +77,79 @@ def already_injected(
 
     return False
 
+def remove_trace_from_file(
+    cpp_file,
+    logger,
+    stats
+):
+
+    lines = cpp_file.read_text(
+        encoding="utf-8"
+    ).splitlines(True)
+
+    modified = False
+
+    i = 0
+
+    result = []
+
+    while i < len(lines):
+
+        line = lines[i]
+
+        if "ScopeTrace trace(" in line:
+
+            logger.log(
+                "   ✨ Removed ScopeTrace"
+            )
+
+            stats["trace_removed"] += 1
+
+            modified = True
+
+            #
+            # remove block
+            #
+            i += 1
+
+            while i < len(lines):
+
+                if ");" in lines[i]:
+                    i += 1
+                    break
+
+                i += 1
+
+            #
+            # remove blank line after trace
+            #
+            if (
+                i < len(lines)  
+                and
+                lines[i].strip() == ""
+            ):
+                i += 1
+
+            continue
+
+        result.append(line)
+
+        i += 1
+
+    if modified:
+
+        cpp_file.write_text(
+            "".join(result),
+            encoding="utf-8"
+        )
+
+        stats["files_modified"] += 1
+
+    else:
+
+        logger.log(
+            "   ✅ No changes required."
+        )
 
 def find_open_brace_line(
     lines,
@@ -219,6 +292,7 @@ def inject_trace_into_file(
 
 def process_rule(
     rule,
+    mode,
     logger,
     stats
 ):
@@ -252,12 +326,22 @@ def process_rule(
             f"⚙️ Processing: {cpp_file}"
         )
 
-        inject_trace_into_file(
-            cpp_file,
-            function_name,
-            logger,
-            stats
-        )
+        if mode == "remove_trace":
+
+            remove_trace_from_file(
+                cpp_file,
+                logger,
+                stats
+            )
+
+        else:
+
+            inject_trace_into_file(
+                cpp_file,
+                function_name,
+                logger,
+                stats
+            )
 
 
 def cleanup_logs():
@@ -289,11 +373,15 @@ def main():
     config = load_config(
         args.config
     )
-
+    mode = config.get(
+        "mode",
+        "inject_trace"
+    )
     stats = {
         "files_scanned": 0,
         "files_modified": 0,
-        "trace_injected": 0
+        "trace_injected": 0,
+        "trace_removed": 0
     }
 
     logger.log(
@@ -315,6 +403,7 @@ def main():
 
         process_rule(
             rule,
+            mode,
             logger,
             stats
         )
@@ -347,6 +436,11 @@ def main():
     logger.log()
     logger.log(
         f"Log written to: {logger.log_file}"
+    )
+    
+    logger.log(
+        f"Trace Removed : "
+        f"{stats['trace_removed']}"
     )
 
     logger.close()
