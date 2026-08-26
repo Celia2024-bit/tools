@@ -166,7 +166,7 @@ Echoing that would train you to ignore the warning that matters.
 | File | Shows |
 |---|---|
 | `config_inject_example.json` | inject with a function-level `exclude` |
-| `config_remove_example.json` | remove with a file-level `exclude` |
+| `config_remove_example.json` | remove with a function-level `exclude` |
 | `config_base_class_example.json` | every `Run()` override under `IStrategy`, no `include_dirs` needed |
 | `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required |
 

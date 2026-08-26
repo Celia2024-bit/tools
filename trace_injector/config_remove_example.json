@@ -9,9 +9,9 @@
 
     "exclude": [
         {
-            "directory": "test/src/strategy",
-            "file": "StrategyEngine.cpp",
-            "function": ""
+            "directory": "test/src/",
+            "file": "",
+            "function": "Run"
         }
     ]
 }
