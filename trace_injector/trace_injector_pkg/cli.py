@@ -3,7 +3,7 @@ from pathlib import Path
 
 from logger import Logger
 
-from .config import load_config
+from .config import load_config, resolve_mode_and_rules
 from .processor import process_rule
 
 
@@ -36,13 +36,13 @@ def main():
     config = load_config(
         args.config
     )
-    mode = config.get(
-        "mode",
-        "inject_trace"
-    )
+
+    mode, rules, exclude_rules = resolve_mode_and_rules(config)
+
     stats = {
         "files_scanned": 0,
         "files_modified": 0,
+        "files_excluded": 0,
         "trace_injected": 0,
         "trace_removed": 0
     }
@@ -52,21 +52,23 @@ def main():
     )
 
     logger.log(
-        "Trace Injector v1.1"
+        "Trace Injector v1.2"
+    )
+
+    logger.log(
+        f"Mode: {mode}"
     )
 
     logger.log(
         "================================================="
     )
 
-    for rule in config.get(
-        "rules",
-        []
-    ):
+    for rule in rules:
 
         process_rule(
             rule,
             mode,
+            exclude_rules,
             logger,
             stats
         )
@@ -93,17 +95,20 @@ def main():
     )
 
     logger.log(
+        f"Files Excluded : {stats['files_excluded']}"
+    )
+
+    logger.log(
         f"Trace Injected : {stats['trace_injected']}"
+    )
+
+    logger.log(
+        f"Trace Removed  : {stats['trace_removed']}"
     )
 
     logger.log()
     logger.log(
         f"Log written to: {logger.log_file}"
-    )
-
-    logger.log(
-        f"Trace Removed : "
-        f"{stats['trace_removed']}"
     )
 
     logger.close()

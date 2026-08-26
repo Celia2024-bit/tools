@@ -1,3 +1,4 @@
+from .excludes import get_exclusions_for_file
 from .file_discovery import find_cpp_files
 from .injector import inject_trace_into_file
 from .remover import remove_trace_from_file
@@ -6,6 +7,7 @@ from .remover import remove_trace_from_file
 def process_rule(
     rule,
     mode,
+    exclude_rules,
     logger,
     stats
 ):
@@ -39,7 +41,29 @@ def process_rule(
             f"⚙️ Processing: {cpp_file}"
         )
 
-        if mode == "remove_trace":
+        whole_file_excluded, excluded_functions = get_exclusions_for_file(
+            cpp_file,
+            exclude_rules
+        )
+
+        if whole_file_excluded:
+
+            logger.log(
+                "   🚫 Excluded (whole file)"
+            )
+            stats["files_excluded"] += 1
+            continue
+
+        if mode == "remove":
+
+            if excluded_functions:
+
+                logger.log(
+                    "   ⚠️ Function-level exclude is not supported "
+                    "in remove mode; excluding whole file instead."
+                )
+                stats["files_excluded"] += 1
+                continue
 
             remove_trace_from_file(
                 cpp_file,
@@ -53,5 +77,6 @@ def process_rule(
                 cpp_file,
                 function_name,
                 logger,
-                stats
+                stats,
+                excluded_functions=excluded_functions
             )

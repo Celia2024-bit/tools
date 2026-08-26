@@ -9,8 +9,12 @@ def inject_trace_into_file(
     cpp_file,
     target_function,
     logger,
-    stats
+    stats,
+    excluded_functions=None
 ):
+
+    if excluded_functions is None:
+        excluded_functions = set()
 
     index = cindex.Index.create()
 
@@ -57,6 +61,13 @@ def inject_trace_into_file(
             node.spelling,
             target_function
         ):
+            continue
+
+        if node.spelling in excluded_functions:
+
+            logger.log(
+                f"   🚫 Excluded: {node.spelling}()"
+            )
             continue
 
         brace_idx = find_open_brace_line(
