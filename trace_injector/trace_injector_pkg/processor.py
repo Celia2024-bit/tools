@@ -56,14 +56,8 @@ def process_rule(
 
         if mode == "remove":
 
-            if excluded_functions:
-
-                logger.log(
-                    "   ⚠️ Function-level exclude is not supported "
-                    "in remove mode; excluding whole file instead."
-                )
-                stats["files_excluded"] += 1
-                continue
+            # function-level excludes are rejected at config-load time
+            # for remove mode, so excluded_functions is always empty here
 
             remove_trace_from_file(
                 cpp_file,

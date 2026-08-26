@@ -39,4 +39,16 @@ def resolve_mode_and_rules(config):
     rules = config.get(mode, [])
     exclude_rules = config.get("exclude", [])
 
+    if mode == "remove":
+
+        for exclude_rule in exclude_rules:
+
+            if exclude_rule.get("function", ""):
+                raise ValueError(
+                    "\"exclude\" entries cannot specify a \"function\" "
+                    "when mode is \"remove\" — remove only supports "
+                    "excluding at the directory/file level. Offending "
+                    f"entry: {exclude_rule}"
+                )
+
     return mode, rules, exclude_rules
