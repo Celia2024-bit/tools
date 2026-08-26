@@ -37,7 +37,7 @@ def main():
         args.config
     )
 
-    mode, rules, exclude_rules = resolve_mode_and_rules(config)
+    mode, rules, exclude_rules, include_dirs = resolve_mode_and_rules(config)
 
     stats = {
         "files_scanned": 0,
@@ -70,7 +70,8 @@ def main():
             mode,
             exclude_rules,
             logger,
-            stats
+            stats,
+            include_dirs=include_dirs
         )
 
     logger.log()

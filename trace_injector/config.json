@@ -3,6 +3,7 @@
         {
             "directory": "test/src",
             "file": "",
+            "base_class": "IStrategy",
             "function": "Run"
         }
     ]

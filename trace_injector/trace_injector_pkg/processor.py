@@ -9,7 +9,8 @@ def process_rule(
     mode,
     exclude_rules,
     logger,
-    stats
+    stats,
+    include_dirs=None
 ):
 
     directory = rule.get(
@@ -24,6 +25,11 @@ def process_rule(
 
     function_name = rule.get(
         "function",
+        ""
+    )
+
+    base_class = rule.get(
+        "base_class",
         ""
     )
 
@@ -72,5 +78,7 @@ def process_rule(
                 function_name,
                 logger,
                 stats,
-                excluded_functions=excluded_functions
+                excluded_functions=excluded_functions,
+                target_base_class=base_class,
+                include_dirs=include_dirs
             )

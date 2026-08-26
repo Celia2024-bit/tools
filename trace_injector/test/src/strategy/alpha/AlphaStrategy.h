@@ -1,8 +1,12 @@
 #pragma once
 
-class AlphaStrategy
+#include "../StrategyEngine.h"
+
+class AlphaStrategy : public StrategyEngine
 {
 public:
+
+    void Run() override;
 
     void Evaluate();
 

@@ -1,10 +1,12 @@
 #pragma once
 
-class StrategyEngine
+#include "IStrategy.h"
+
+class StrategyEngine : public IStrategy
 {
 public:
 
-    void Run();
+    void Run() override;
 
-    void Stop();
+    void Stop() override;
 };

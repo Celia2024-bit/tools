@@ -1,7 +1,7 @@
 {
     "remove": [
         {
-            "directory": "test/src/debug",
+            "directory": "test/src/",
             "file": "",
             "function": ""
         }
