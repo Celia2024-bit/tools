@@ -1,0 +1,9 @@
+{
+    "rules": [
+        {
+            "directory": "test/src",
+            "file": "StrategyEngine.cpp",
+            "function": "Run"
+        }
+    ]
+}
