@@ -244,6 +244,18 @@ SCENARIOS = [
         "warns": True,
         "remaining": 4
     },
+    #
+    # Runs the shipped examples for real, not just through validation: the
+    # remove example claims to be the exact undo of the inject one, and
+    # "remaining: 0" is the only thing that actually proves it.
+    #
+    {
+        "name": "examples: base_class inject then remove leaves nothing",
+        "setup_config": "config_base_class_includedirs_example.json",
+        "config": "config_base_class_remove_example.json",
+        "removed": EXECUTOR_OVERRIDES,
+        "remaining": 0
+    },
     {
         "name": "remove: function-level exclude keeps every Run",
         "setup": INJECT_ALL_SRC,
@@ -357,10 +369,37 @@ def check_example_configs():
     return failures
 
 
+def apply_config(config_file, logger, stats):
+    """Run every rule in a shipped config file, the way the CLI does."""
+
+    mode, rules, exclude_rules, include_dirs = resolve_mode_and_rules(
+        load_config(ROOT / config_file)
+    )
+
+    for rule in rules:
+
+        process_rule(
+            rule,
+            mode,
+            exclude_rules,
+            logger,
+            stats,
+            include_dirs=include_dirs
+        )
+
+
 def run_scenario(scenario):
     """Returns a list of failure descriptions (empty means the test passed)."""
 
-    if scenario.get("setup"):
+    if scenario.get("setup_config"):
+
+        apply_config(
+            scenario["setup_config"],
+            CaptureLogger(),
+            fresh_stats()
+        )
+
+    elif scenario.get("setup"):
 
         process_rule(
             scenario["setup"],
@@ -374,14 +413,24 @@ def run_scenario(scenario):
     logger = CaptureLogger()
     stats = fresh_stats()
 
-    process_rule(
-        scenario["rule"],
-        scenario.get("mode", "inject"),
-        scenario.get("exclude", []),
-        logger,
-        stats,
-        include_dirs=scenario.get("include_dirs", [])
-    )
+    if scenario.get("config"):
+
+        apply_config(
+            scenario["config"],
+            logger,
+            stats
+        )
+
+    else:
+
+        process_rule(
+            scenario["rule"],
+            scenario.get("mode", "inject"),
+            scenario.get("exclude", []),
+            logger,
+            stats,
+            include_dirs=scenario.get("include_dirs", [])
+        )
 
     failures = []
 

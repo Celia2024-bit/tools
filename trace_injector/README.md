@@ -169,6 +169,7 @@ Echoing that would train you to ignore the warning that matters.
 | `config_remove_example.json` | remove with a function-level `exclude` |
 | `config_base_class_example.json` | every `Run()` override under `IStrategy`, no `include_dirs` needed |
 | `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required |
+| `config_base_class_remove_example.json` | the exact undo of the one above — same fields, `inject` swapped for `remove` |
 
 ## Tests
 
