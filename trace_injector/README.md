@@ -45,7 +45,8 @@ optional `exclude` and `include_dirs` keys.
 ### Rule fields
 
 All four are filters, ANDed together. An empty (or absent) field means
-"no restriction on this dimension".
+"no restriction on this dimension". Both modes accept all four: whatever an
+`inject` rule can put in, the same rule under `remove` takes back out.
 
 | Field | Meaning | Empty means |
 |---|---|---|
@@ -67,9 +68,23 @@ Two things to know about it:
   `class B : public A`. Private inheritance still overrides the virtual and
   still dispatches, so skipping it risks a silent miss.
 
-`base_class` is rejected in `remove` rules and in `exclude` rules — remove
-strips every trace it finds in the matched files, and excluding works at the
-directory/file/function level only.
+`base_class` is rejected in `exclude` entries only — excluding works at the
+directory/file/function level.
+
+### What `remove` removes
+
+`remove` mirrors `inject`, with one deliberate asymmetry:
+
+- **Any filter present** (`function`, `base_class`, or a matching `exclude`)
+  → the file is parsed and only the traces sitting at the top of the
+  selected functions are deleted. Same selection pass as `inject`, so the
+  same rule takes back out exactly what it put in, and the log names each
+  function it removed from.
+- **No filter at all** → no parsing, just a line scan that strips *every*
+  `ScopeTrace` in the matched files. Slightly blunter, but it also catches
+  traces the injector never placed (hand-written, or left over from a rule
+  you have since edited). The log cannot name the function in this case,
+  since there is no AST to ask.
 
 ### `directory` vs `include_dirs`
 
@@ -124,15 +139,27 @@ Trace Injected : 0
 
 `base_class` depends on this far more than the other filters do: matching by
 function name needs no type information, matching by inheritance needs the
-base class declaration to actually parse. That is why clang's error
-diagnostics are echoed to the log whenever a `base_class` rule is active —
-treat the warning as "results are probably incomplete", not as noise.
+base class declaration to actually parse. That is why clang's diagnostics are
+echoed to the log whenever a `base_class` rule is active — treat the warning
+as "results are probably incomplete", not as noise.
 
-## Known limitation
+Only **fatal** diagnostics are echoed, which in practice means an `#include`
+clang could not resolve — precisely the failure that silently empties a
+`base_class` match. Ordinary semantic errors are not reported: the hierarchy
+still resolves through them, and one of them is guaranteed. Injected files
+do not `#include "ScopeTrace.h"` (the tool never adds it), so every rerun
+over an already-injected tree yields `unknown type name 'ScopeTrace'`.
+Echoing that would train you to ignore the warning that matters.
 
-Only `.cpp` files are scanned, so a virtual function defined inline in a
-header (`void Run() override { ... }`) is never touched. This bites hardest
-with `base_class`, since subclass overrides are often one-liners in headers.
+## Known limitations
+
+- **Headers are not scanned.** Only `.cpp` files, so a virtual function
+  defined inline in a header (`void Run() override { ... }`) is never
+  touched. This bites hardest with `base_class`, since subclass overrides
+  are often one-liners in headers.
+- **The `ScopeTrace` include is not added.** Injected files reference
+  `ScopeTrace` without including its header, so they will not compile until
+  you add it (a project-wide precompiled header is the usual answer).
 
 ## Examples
 
@@ -150,12 +177,12 @@ python test/run_tests.py
 ```
 
 Runs each rule against the fixture trees and asserts the exact set of
-functions that received a trace, then restores the fixtures. Because the
-expected sets are exact, the classes that must NOT match are asserted by
-their absence — `NetworkMgr::Run` (same method name, unrelated class) and
-`LocalCache::Execute` (same method name, no base class).
+functions that received (or lost) a trace, then restores the fixtures.
+Because the expected sets are exact, the classes that must NOT match are
+asserted by their absence — `NetworkMgr::Run` (same method name, unrelated
+class) and `LocalCache::Execute` (same method name, no base class).
 
-Covered scenarios:
+Inject scenarios:
 
 - interface beside the sources, `include_dirs` omitted → matches
 - interface in a separate include root, `include_dirs` given → matches
@@ -164,6 +191,18 @@ Covered scenarios:
 - `base_class` with an empty `function` → every method in the hierarchy
 - labels stay fully qualified with no `base_class` filter in play
 - free functions: namespace qualified, bare at file scope
+
+Remove scenarios (each injects first, then removes, and asserts how many
+traces are left behind):
+
+- unfiltered rule strips the whole file, unnamed
+- `function` only → every `Run()`, nothing else
+- `base_class` → the overrides only, `LocalCache::Execute` survives
+- `base_class` with `include_dirs` missing → warns, removes nothing
+- function-level `exclude` → everything except the excluded `Run()`s
+
+Plus a guard that every shipped `config_*example*.json` still passes
+validation.
 
 If `libclang.dll` is not on the DLL search path, point at it explicitly:
 
