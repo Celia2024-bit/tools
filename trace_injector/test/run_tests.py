@@ -5,7 +5,7 @@ Scenario tests for the base_class / include_dirs targeting modes.
     python test/run_tests.py
 
 Each scenario runs a real rule against the fixture trees, asserts exactly
-which functions got a trace, then restores the fixtures. The expected sets
+which functions were touched, then restores the fixtures. The expected sets
 are exact, so a class that must NOT match (NetworkMgr::Run, LocalCache::
 Execute) is asserted by its absence.
 
@@ -44,6 +44,7 @@ from trace_injector_pkg.config import load_config, resolve_mode_and_rules
 from trace_injector_pkg.processor import process_rule
 
 INJECTED_PREFIX = "   ✨ Injected: "
+REMOVED_PREFIX = "   ✨ Removed: "
 INCOMPLETE_WARNING = "Base-class matching may be incomplete"
 
 #
@@ -57,6 +58,50 @@ INCOMPLETE_WARNING = "Base-class matching may be incomplete"
 #                     (test/proj/include) and OrderExecutor.h includes it as
 #                     "framework/IExecutor.h" => include_dirs required.
 #
+INJECT_ALL_SRC = {
+    "directory": "test/src",
+    "function": ""
+}
+
+INJECT_ALL_PROJ = {
+    "directory": "test/proj/src",
+    "function": ""
+}
+
+#
+# Every function defined under test/src, i.e. what INJECT_ALL_SRC produces.
+#
+ALL_SRC_FUNCTIONS = {
+    "NetworkMgr::Connect",
+    "NetworkMgr::Disconnect",
+    "NetworkMgr::Run",
+    "OrderMgr::OnData",
+    "OrderMgr::OnConnected",
+    "OrderMgr::SubmitOrder",
+    "MarketData::OnSnapshot",
+    "MarketData::OnTick",
+    "IStrategy::Stop",
+    "StrategyEngine::Run",
+    "StrategyEngine::Stop",
+    "AlphaStrategy::Run",
+    "AlphaStrategy::Evaluate",
+    "AlphaStrategy::Rebalance",
+    "Normalize",
+    "util::Reset"
+}
+
+ALL_RUNS = {
+    "NetworkMgr::Run",
+    "StrategyEngine::Run",
+    "AlphaStrategy::Run"
+}
+
+EXECUTOR_OVERRIDES = {
+    "OrderExecutor::Execute",
+    "SlowExecutor::Execute",
+    "FastExecutor::Execute"
+}
+
 SCENARIOS = [
     {
         "name": "same tree, relative includes, no include_dirs",
@@ -65,12 +110,10 @@ SCENARIOS = [
             "base_class": "IStrategy",
             "function": "Run"
         },
-        "include_dirs": [],
         "injected": {
             "StrategyEngine::Run",
             "AlphaStrategy::Run"
-        },
-        "warns": False
+        }
     },
     {
         "name": "separate include root, include_dirs given",
@@ -82,12 +125,7 @@ SCENARIOS = [
         "include_dirs": [
             "test/proj/include"
         ],
-        "injected": {
-            "OrderExecutor::Execute",
-            "FastExecutor::Execute",
-            "SlowExecutor::Execute"
-        },
-        "warns": False
+        "injected": EXECUTOR_OVERRIDES
     },
     {
         "name": "separate include root, include_dirs MISSING -> warn, no writes",
@@ -96,7 +134,6 @@ SCENARIOS = [
             "base_class": "IExecutor",
             "function": "Execute"
         },
-        "include_dirs": [],
         "injected": set(),
         "warns": True
     },
@@ -107,12 +144,10 @@ SCENARIOS = [
             "base_class": "IStrategy",
             "function": "Stop"
         },
-        "include_dirs": [],
         "injected": {
             "IStrategy::Stop",
             "StrategyEngine::Stop"
-        },
-        "warns": False
+        }
     },
     {
         "name": "no base_class: labels are qualified all the same",
@@ -120,13 +155,7 @@ SCENARIOS = [
             "directory": "test/src",
             "function": "Run"
         },
-        "include_dirs": [],
-        "injected": {
-            "NetworkMgr::Run",
-            "StrategyEngine::Run",
-            "AlphaStrategy::Run"
-        },
-        "warns": False
+        "injected": ALL_RUNS
     },
     {
         "name": "free functions: namespace qualified, bare at file scope",
@@ -134,12 +163,10 @@ SCENARIOS = [
             "directory": "test/src/util",
             "function": ""
         },
-        "include_dirs": [],
         "injected": {
             "util::Reset",
             "Normalize"
-        },
-        "warns": False
+        }
     },
     {
         "name": "empty function: every method in the hierarchy",
@@ -148,7 +175,6 @@ SCENARIOS = [
             "base_class": "IStrategy",
             "function": ""
         },
-        "include_dirs": [],
         "injected": {
             "IStrategy::Stop",
             "StrategyEngine::Run",
@@ -156,8 +182,84 @@ SCENARIOS = [
             "AlphaStrategy::Run",
             "AlphaStrategy::Evaluate",
             "AlphaStrategy::Rebalance"
+        }
+    },
+    #
+    # remove side: the same rule fields must take traces back out again.
+    #
+    {
+        "name": "remove: unfiltered rule strips the whole file",
+        "setup": INJECT_ALL_SRC,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/src",
+            "function": ""
         },
-        "warns": False
+        "removed": set(),
+        "removed_count": len(ALL_SRC_FUNCTIONS),
+        "remaining": 0
+    },
+    {
+        "name": "remove: by function name only",
+        "setup": INJECT_ALL_SRC,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/src",
+            "function": "Run"
+        },
+        "removed": ALL_RUNS,
+        "remaining": len(ALL_SRC_FUNCTIONS) - len(ALL_RUNS)
+    },
+    {
+        "name": "remove: by base_class, LocalCache::Execute survives",
+        "setup": INJECT_ALL_PROJ,
+        "setup_include_dirs": [
+            "test/proj/include"
+        ],
+        "mode": "remove",
+        "rule": {
+            "directory": "test/proj/src",
+            "base_class": "IExecutor",
+            "function": "Execute"
+        },
+        "include_dirs": [
+            "test/proj/include"
+        ],
+        "removed": EXECUTOR_OVERRIDES,
+        "remaining": 1
+    },
+    {
+        "name": "remove: base_class with include_dirs MISSING -> warn, no writes",
+        "setup": INJECT_ALL_PROJ,
+        "setup_include_dirs": [
+            "test/proj/include"
+        ],
+        "mode": "remove",
+        "rule": {
+            "directory": "test/proj/src",
+            "base_class": "IExecutor",
+            "function": "Execute"
+        },
+        "removed": set(),
+        "warns": True,
+        "remaining": 4
+    },
+    {
+        "name": "remove: function-level exclude keeps every Run",
+        "setup": INJECT_ALL_SRC,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/src",
+            "function": ""
+        },
+        "exclude": [
+            {
+                "directory": "test/src",
+                "function": "Run"
+            }
+        ],
+        "removed": ALL_SRC_FUNCTIONS - ALL_RUNS,
+        "remaining": len(ALL_RUNS)
     }
 ]
 
@@ -173,6 +275,17 @@ class CaptureLogger:
     @property
     def text(self):
         return "\n".join(self.lines)
+
+
+def fresh_stats():
+
+    return {
+        "files_scanned": 0,
+        "files_modified": 0,
+        "files_excluded": 0,
+        "trace_injected": 0,
+        "trace_removed": 0
+    }
 
 
 def snapshot_fixtures():
@@ -198,66 +311,25 @@ def restore_fixtures(saved):
             )
 
 
-def injected_labels(logger):
+def count_traces():
+
+    total = 0
+
+    for path in HERE.rglob("*.cpp"):
+        total += path.read_text(
+            encoding="utf-8"
+        ).count("ScopeTrace trace(")
+
+    return total
+
+
+def labels_with_prefix(logger, prefix):
 
     return {
-        line[len(INJECTED_PREFIX):].removesuffix("()")
+        line[len(prefix):].removesuffix("()")
         for line in logger.lines
-        if line.startswith(INJECTED_PREFIX)
+        if line.startswith(prefix)
     }
-
-
-def run_scenario(scenario):
-    """Returns a list of failure descriptions (empty means the test passed)."""
-
-    logger = CaptureLogger()
-
-    stats = {
-        "files_scanned": 0,
-        "files_modified": 0,
-        "files_excluded": 0,
-        "trace_injected": 0,
-        "trace_removed": 0
-    }
-
-    process_rule(
-        scenario["rule"],
-        "inject",
-        [],
-        logger,
-        stats,
-        include_dirs=scenario["include_dirs"]
-    )
-
-    failures = []
-
-    actual = injected_labels(logger)
-    expected = scenario["injected"]
-
-    if actual != expected:
-
-        failures.append(
-            f"injected mismatch\n"
-            f"      missing: {sorted(expected - actual) or '-'}\n"
-            f"      extra  : {sorted(actual - expected) or '-'}"
-        )
-
-    warned = INCOMPLETE_WARNING in logger.text
-
-    if warned != scenario["warns"]:
-
-        failures.append(
-            f"expected warning={scenario['warns']}, got {warned}"
-        )
-
-    if stats["trace_injected"] != len(expected):
-
-        failures.append(
-            f"stats trace_injected={stats['trace_injected']}, "
-            f"expected {len(expected)}"
-        )
-
-    return failures
 
 
 def check_example_configs():
@@ -281,6 +353,92 @@ def check_example_configs():
             failures.append(
                 f"{config_file.name}: {error}"
             )
+
+    return failures
+
+
+def run_scenario(scenario):
+    """Returns a list of failure descriptions (empty means the test passed)."""
+
+    if scenario.get("setup"):
+
+        process_rule(
+            scenario["setup"],
+            "inject",
+            [],
+            CaptureLogger(),
+            fresh_stats(),
+            include_dirs=scenario.get("setup_include_dirs", [])
+        )
+
+    logger = CaptureLogger()
+    stats = fresh_stats()
+
+    process_rule(
+        scenario["rule"],
+        scenario.get("mode", "inject"),
+        scenario.get("exclude", []),
+        logger,
+        stats,
+        include_dirs=scenario.get("include_dirs", [])
+    )
+
+    failures = []
+
+    checks = [
+        ("injected", INJECTED_PREFIX, "trace_injected"),
+        ("removed", REMOVED_PREFIX, "trace_removed")
+    ]
+
+    for key, prefix, stat_key in checks:
+
+        if key not in scenario:
+            continue
+
+        actual = labels_with_prefix(logger, prefix)
+        expected = scenario[key]
+
+        if actual != expected:
+
+            failures.append(
+                f"{key} mismatch\n"
+                f"      missing: {sorted(expected - actual) or '-'}\n"
+                f"      extra  : {sorted(actual - expected) or '-'}"
+            )
+
+        #
+        # An explicit count covers the whole-file remove path, which deletes
+        # traces without being able to name the function they sat in.
+        #
+        count_key = f"{key}_count"
+        expected_count = scenario.get(count_key, len(expected))
+
+        if stats[stat_key] != expected_count:
+
+            failures.append(
+                f"stats {stat_key}={stats[stat_key]}, "
+                f"expected {expected_count}"
+            )
+
+    if "remaining" in scenario:
+
+        remaining = count_traces()
+
+        if remaining != scenario["remaining"]:
+
+            failures.append(
+                f"{remaining} traces left in the fixtures, "
+                f"expected {scenario['remaining']}"
+            )
+
+    warned = INCOMPLETE_WARNING in logger.text
+    expected_warning = scenario.get("warns", False)
+
+    if warned != expected_warning:
+
+        failures.append(
+            f"expected warning={expected_warning}, got {warned}"
+        )
 
     return failures
 
