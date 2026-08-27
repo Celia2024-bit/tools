@@ -4,6 +4,7 @@ from pathlib import Path
 from logger import Logger
 
 from .config import load_config, resolve_mode_and_rules
+from .libclang_setup import configure
 from .processor import process_rule
 
 
@@ -30,6 +31,13 @@ def main():
     args = parser.parse_args()
 
     cleanup_logs()
+
+    #
+    # Before anything parses. Without this the first file turns into a
+    # LibclangError traceback, which the test harness never saw because it
+    # configured the bindings itself.
+    #
+    library = configure()
 
     logger = Logger()
 
@@ -67,6 +75,11 @@ def main():
     logger.log(
         f"Mode: {mode}"
     )
+
+    if library:
+        logger.log(
+            f"libclang: {library}"
+        )
 
     logger.log(
         "================================================="
