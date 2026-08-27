@@ -1,0 +1,130 @@
+#ifndef PARAMETER_CHECK_H
+#define PARAMETER_CHECK_H
+
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <ctime>
+
+// Dynamically injected headers based on target configuration
+#include "{{ check_traits_header_path }}"
+#include "{{ types_header_path }}"
+
+namespace details {
+
+// SFINAE trait to detect if check_traits<T>::check(...) is callable
+template <typename T, typename = void>
+struct has_check_traits : std::false_type {};
+
+template <typename T>
+struct has_check_traits<T, std::void_t<decltype(check_traits<T>::check(std::declval<const T&>()))>> : std::true_type {};
+
+// Compile-time validity predicate
+template <typename T>
+constexpr bool is_validatable_v = 
+    std::is_fundamental_v<T> || 
+    std::is_pointer_v<T> || 
+    has_isValid_v<T> || 
+    has_empty_v<T> || 
+    has_check_traits<T>::value;
+
+} // namespace details
+
+inline std::string current_timestamp() {
+    std::time_t now = std::time(nullptr);
+    char buf[64];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+    return std::string(buf);
+}
+
+template<typename T>
+bool default_validate(const T& value)
+{
+    // Compile-time check: throw an explicit static failure if type is not prepared
+    static_assert(
+        details::is_validatable_v<T>,
+        "[Validation Error] Type is NOT prepared for validation! "
+        "Provide one of: 'isValid() const', 'empty()', or 'check_traits<T>' specialization."
+    );
+
+    if constexpr (std::is_integral_v<T>)
+    {
+        return value > 0;
+    }
+    else if constexpr (std::is_floating_point_v<T>)
+    {
+        return std::isfinite(value) && value > 0;
+    }
+    else if constexpr (std::is_pointer_v<T>)
+    {
+        return value != nullptr;
+    }
+    else if constexpr (has_isValid_v<T>)
+    {
+        return value.isValid();
+    }
+    else if constexpr (has_empty_v<T>)
+    {
+        return !value.empty();
+    }
+    else
+    {
+        return check_traits<T>::check(value);
+    }
+}
+
+template<typename T>
+bool validate_one_param(const char* caller, const char* param_name, const T& value) {
+    bool result = default_validate(value);
+    if (!result) {
+        std::string msg = "[" + current_timestamp() + "] "
+                          "Error in function \"" + caller + "\" - "
+                          "Parameter \"" + param_name + "\" is invalid. ";
+        std::cout << msg << std::endl;
+
+        std::ofstream log_file("parameter_check.log", std::ios::app);
+        if (log_file.is_open()) {
+            log_file << msg << std::endl;
+            log_file.close();
+        } else {
+            std::cerr << "Failed to open log file for writing." << std::endl;
+        }
+    }
+    return result;
+}
+
+inline bool validate_params_impl(const char** names, size_t current_idx, const char* caller) {
+    (void)names;
+    (void)current_idx;
+    (void)caller;
+    return true; 
+}
+
+template<typename First, typename... Rest>
+bool validate_params_impl(const char** names, size_t current_idx, const char* caller, const First& first, const Rest&... rest) {
+    bool current_result = validate_one_param(caller, names[current_idx], first);
+    bool rest_result = validate_params_impl(names, current_idx + 1, caller, rest...);
+    return current_result && rest_result;
+}
+
+template<typename... Args>
+bool validate_params(const char* caller, const char** names, const Args&... args) {
+    return validate_params_impl(names, 0, caller, args...);
+}
+
+template<typename... Args>
+bool validate_params(const char* caller, const Args&... args) {
+    constexpr size_t count = sizeof...(args);
+    static_assert(count <= 10, "validate_params supports up to 10 parameters only");
+
+    static const char* dummy_names[10] = {
+        "param1", "param2", "param3", "param4", "param5",
+        "param6", "param7", "param8", "param9", "param10"
+    };
+
+    return validate_params(caller, dummy_names, args...);
+}
+
+#endif // PARAMETER_CHECK_H
