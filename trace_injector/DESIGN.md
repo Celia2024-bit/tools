@@ -323,7 +323,26 @@ private:
    Bodies written on one line are skipped with a warning: nothing fits after
    the line without landing outside the braces.
 7. C++ side: write `ScopeTrace.h`, apply the `ParameterCheck.h` changes.
-   Independent of 1–6.
+   Independent of 1–6. Three things came out differently from the sketch above:
+   - The default level is a macro (`SCOPE_TRACE_LEVEL`, `PARAMETER_CHECK_LEVEL`)
+     rather than `CustomerLogLevel::DEBUG`. Naming the enum would mean
+     `#include "../src/Types.h"` from `util`, which is the dependency this step
+     is removing.
+   - The generic `default_check` does **not** assert that a container is
+     non-empty. "Non-empty" is a rule about a particular container, not about
+     `std::vector`, and putting it in the generic layer would recreate exactly
+     the `> 0` false-positive problem this step exists to fix. `DoubleVector`
+     and `TradeDataVector` keep the rule by registering it in `src/Types.h`;
+     `DoubleDeque` deliberately does not, an empty rolling window being an
+     ordinary state on the first tick.
+   - The fold over `&` indexes its names through an `std::index_sequence`
+     rather than walking a pointer. `check_one_param(caller, *name++, args)`
+     would leave the increments unsequenced, which is undefined — and the `&`
+     itself has to stay, since `&&` would hide the second bad parameter.
+
+   Landed as: `ScopeTrace.h` plus its test in `util`; `ParameterCheck.h`
+   rewritten with `check_traits`; the six registrations and their test in the
+   parent repo; the built-in payload switched to the qualified name.
 
 Every step must leave `python test/run_tests.py` green, with new scenarios
 and self checks added as the behaviour grows.

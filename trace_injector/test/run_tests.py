@@ -444,7 +444,7 @@ ALL_KINDS_FUNCTIONS = {
 CTOR_INJECTED = (
     "    , m_limit{limit}\n"
     "{\n"
-    "    ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);"
+    "    ScopeTrace trace(__FILE__, __LINE__, \"Kinds::Kinds\");"
     "  // @tj:scope_trace\n"
 )
 
@@ -1095,6 +1095,24 @@ SCENARIOS = [
         ]
     },
     {
+        "name": "kinds: the trace names the class, not just the function",
+        "rule": INJECT_ALL_KINDS,
+        "injected": ALL_KINDS_FUNCTIONS,
+        #
+        # __FUNCTION__ would give `Emit` and `~Kinds` on gcc, with nothing to
+        # say which class, and something else again on MSVC. A free function
+        # has no class to add, and reads the same either way.
+        #
+        "must_contain": [
+            "ScopeTrace trace(__FILE__, __LINE__, \"Kinds::Emit\");",
+            "ScopeTrace trace(__FILE__, __LINE__, \"Kinds::~Kinds\");",
+            "ScopeTrace trace(__FILE__, __LINE__, \"UseEmit\");"
+        ],
+        "must_not_contain": [
+            "__FUNCTION__"
+        ]
+    },
+    {
         "name": "kinds: the member-init list is not mistaken for the body",
         "rule": INJECT_ALL_KINDS,
         "injected": ALL_KINDS_FUNCTIONS,
@@ -1193,7 +1211,7 @@ SCENARIOS = [
         },
         "remaining": 2,
         "must_contain": [
-            "    ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);"
+            "    ScopeTrace trace(__FILE__, __LINE__, \"AlphaStrategy::Run\");"
             "  // @tj:scope_trace\n"
             "    LOG(INFO) << \"-> AlphaStrategy::Run\";  // @tj:enter_exit\n"
         ]
@@ -1914,6 +1932,28 @@ def patch_one_line_blind():
     )
 
 
+def patch_payload_uses_function_macro():
+    """
+    Put __FUNCTION__ back in the built-in payload, the way it read before the
+    real ScopeTrace existed. Every other scenario is unaffected: the marker is
+    what removal reads, and the include is unchanged.
+    """
+
+    return patch_function(
+        "BUILT_IN_PAYLOADS",
+        {
+            "scope_trace": {
+                "lines": [
+                    "{indent}ScopeTrace trace("
+                    "__FILE__, __LINE__, __FUNCTION__);"
+                ],
+                "include": "ScopeTrace.h"
+            }
+        },
+        ["payloads", "injector", "processor"]
+    )
+
+
 SELF_CHECKS = [
     {
         "name": "targeted remove degraded to whole-file",
@@ -2116,6 +2156,23 @@ SELF_CHECKS = [
             #
             "kinds: a template nothing instantiates is still found",
             "params: a payload naming no parameter goes in everywhere"
+        ]
+    },
+    {
+        "name": "built-in payload back to __FUNCTION__",
+        "patch": patch_payload_uses_function_macro,
+        "must_fail": [
+            "kinds: the trace names the class, not just the function",
+            "kinds: constructor, destructor and template all take a payload",
+            "examples: the payloads example writes both, in order"
+        ],
+        "must_pass": [
+            #
+            # Removal never reads the payload's text, so a different payload
+            # comes out exactly the same way.
+            #
+            "kinds: every payload put in comes back out",
+            "kinds: a destructor's payload comes out by name"
         ]
     },
     {

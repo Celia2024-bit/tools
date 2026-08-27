@@ -29,11 +29,20 @@ ending in a marker:
 
 void AlphaStrategy::Run()
 {
-    ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);  // @tj:scope_trace
+    ScopeTrace trace(__FILE__, __LINE__, "AlphaStrategy::Run");  // @tj:scope_trace
 
     ...
 }
 ```
+
+The name goes in as a string literal rather than `__FUNCTION__`, which on gcc
+is bare — `Run`, with no word about which class — and on MSVC is qualified with
+the parameter list. The injector already knows the qualified name, so the log
+reads the same whatever compiles it.
+
+The guard itself is `util/ScopeTrace.h`: an RAII object that logs on the way in,
+and on the way out from its destructor so that an early `return` is still
+reported. Compile with `-DSCOPE_TRACE_ENABLED=0` and it collapses to nothing.
 
 The marker is what `remove` looks for. It names the payload that produced the
 line, so removal never has to recognise the payload's own text — leave the
@@ -165,7 +174,7 @@ which writes, in the order listed:
 ```cpp
 void AlphaStrategy::Run()
 {
-    ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);  // @tj:scope_trace
+    ScopeTrace trace(__FILE__, __LINE__, "AlphaStrategy::Run");  // @tj:scope_trace
     LOG(INFO) << "-> AlphaStrategy::Run";  // @tj:enter_exit
 
     ...
@@ -398,14 +407,15 @@ their absence — `NetworkMgr::Run` (same method name, unrelated class) and
 `LocalCache::Execute` (same method name, no base class). Three of them run the
 shipped example configs for real rather than a copy of their rules.
 
-**2. Self checks.** Breaks the tool on purpose fourteen ways — degrade targeted
+**2. Self checks.** Breaks the tool on purpose fifteen ways — degrade targeted
 remove to the whole-file scan, stop restricting definitions to the main file,
 widen the parse warning past fatal, drop the pre-marker fallback, go blind to
 markers, ignore a rule's payload list, leave placeholders unsubstituted, stop
 seeing the region already in a body, keep every injected `#include` forever,
 go blind to an `#include` already present, let parameter payloads into
 functions whose parameters cannot be named, find the body brace by scanning
-text instead of asking the AST, treat a one-line body as having room, typo a
+text instead of asking the AST, treat a one-line body as having room, put
+`__FUNCTION__` back in the built-in payload, typo a
 `base_class` in an example config — and confirms the right scenarios go red
 and the others stay green. A green suite only means something if it can go
 red; this is what stops an assertion from quietly becoming vacuous. Skipped
@@ -485,6 +495,8 @@ Definition-kind scenarios (`test/kinds`, one member per shape a body can take):
 
 - a constructor, a destructor and a member template all receive a payload, and
   a template nothing instantiates does too
+- each of them is named by its qualified name — `Kinds::~Kinds`, not `~Kinds`,
+  and `__FUNCTION__` appears nowhere
 - the constructor's payload goes below the member-init list, not inside it —
   asserted on the exact bytes, since `m_limit{limit}` has the earlier `{`
 - a template that is only declared is left alone, which is what the text scan

@@ -20,13 +20,17 @@ BODY_INDENT = "    "
 
 #
 # The built-in payload. A config's "payloads" table overrides entries by name
-# and adds new ones. Leave the table out and this is what inject writes —
-# exactly what it wrote before payloads were configurable.
+# and adds new ones. Leave the table out and this is what inject writes.
+#
+# The name goes in as a string literal rather than __FUNCTION__ because
+# __FUNCTION__ is bare on gcc — `Run`, with no word about which class — and
+# fully qualified with its parameter list on MSVC. The injector already knows
+# the qualified name, so it writes it and the log reads the same either way.
 #
 BUILT_IN_PAYLOADS = {
     SCOPE_TRACE: {
         "lines": [
-            "{indent}ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);"
+            "{indent}ScopeTrace trace(__FILE__, __LINE__, \"{qualified_name}\");"
         ],
         "include": "ScopeTrace.h"
     }

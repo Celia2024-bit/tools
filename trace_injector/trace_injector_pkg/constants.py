@@ -2,7 +2,7 @@
 # Every injected line ends with this marker followed by the name of the
 # payload that produced it:
 #
-#     ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);  // @tj:scope_trace
+#     ScopeTrace trace(__FILE__, __LINE__, "Strategy::Run");  // @tj:scope_trace
 #
 # Removal matches on the marker, never on the payload's own text, so it does
 # not need to know what any payload looks like. That is what makes payloads
