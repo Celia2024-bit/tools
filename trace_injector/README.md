@@ -153,10 +153,13 @@ Echoing that would train you to ignore the warning that matters.
 
 ## Known limitations
 
-- **Headers are not scanned.** Only `.cpp` files, so a virtual function
-  defined inline in a header (`void Run() override { ... }`) is never
-  touched. This bites hardest with `base_class`, since subclass overrides
-  are often one-liners in headers.
+- **Headers are not modified.** Only `.cpp` files are scanned and written, so
+  a virtual function defined inline in a header (`void Run() override { ... }`)
+  is never given a trace. This bites hardest with `base_class`, since
+  subclass overrides are often one-liners in headers. Such definitions are
+  recognised during parsing and deliberately skipped — placing them by their
+  header line number into the `.cpp` would land the trace in an unrelated
+  function.
 - **The `ScopeTrace` include is not added.** Injected files reference
   `ScopeTrace` without including its header, so they will not compile until
   you add it (a project-wide precompiled header is the usual answer).
@@ -220,6 +223,8 @@ traces are left behind):
 - `base_class` with `include_dirs` missing → warns, removes nothing
 - function-level `exclude` → everything except the excluded `Run()`s
 - the two `base_class` example configs round-trip to zero traces
+- a header-inline definition is not placed by its header line number into
+  the `.cpp` (`test/inline_hdr`, built so going wrong is visible)
 
 Plus a guard that every shipped `config_*example*.json` still passes
 validation.

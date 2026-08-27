@@ -4,6 +4,8 @@ function definitions a rule selects. Inject and remove use the same pass, so
 whatever inject can put in, remove can take back out.
 """
 
+import os
+
 from clang import cindex
 
 from .class_hierarchy import is_or_derives_from, owning_class, qualified_name
@@ -92,6 +94,38 @@ def log_parse_problems(tu, logger):
         )
 
 
+def _same_path(left, right):
+
+    return os.path.normcase(
+        os.path.abspath(left)
+    ) == os.path.normcase(
+        os.path.abspath(right)
+    )
+
+
+def in_main_file(node, tu):
+    """
+    Whether the node is defined in the file being rewritten rather than in
+    something it includes.
+
+    Not optional. The walk covers the whole translation unit — every header,
+    including the system ones — while the caller indexes into the .cpp's own
+    line array. A function defined inline in a header would otherwise have
+    its payload placed at the header's line number inside the .cpp, landing
+    in an unrelated function under a label naming the header's one.
+    """
+
+    location = node.location
+
+    if location is None or location.file is None:
+        return False
+
+    return _same_path(
+        location.file.name,
+        tu.spelling
+    )
+
+
 def iter_target_functions(
     tu,
     target_function,
@@ -110,6 +144,9 @@ def iter_target_functions(
     for node in tu.cursor.walk_preorder():
 
         if node.kind not in FUNCTION_KINDS:
+            continue
+
+        if not in_main_file(node, tu):
             continue
 
         if not node.is_definition():

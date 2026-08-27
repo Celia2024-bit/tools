@@ -292,6 +292,32 @@ SCENARIOS = [
         }
     },
     #
+    # A definition living in a header must never be placed by its header line
+    # number into the .cpp. test/inline_hdr is built so that going wrong is
+    # visible: Widget::Run sits on line 11 of Widget.h, and line 11 of
+    # Widget.cpp is an opening brace inside Widget::Later.
+    #
+    {
+        "name": "header-inline definition is not injected into the .cpp",
+        "rule": {
+            "directory": "test/inline_hdr",
+            "function": "Run"
+        },
+        "injected": set(),
+        "remaining": 0
+    },
+    {
+        "name": "the .cpp definition in that same tree still gets injected",
+        "rule": {
+            "directory": "test/inline_hdr",
+            "function": ""
+        },
+        "injected": {
+            "Widget::Later"
+        },
+        "remaining": 1
+    },
+    #
     # remove side: the same rule fields must take traces back out again.
     #
     {
@@ -687,6 +713,18 @@ def patch_remove_ignores_filters():
     return undo
 
 
+def patch_accept_any_file():
+    """Stop restricting definitions to the file being rewritten."""
+
+    original = targets.in_main_file
+    targets.in_main_file = lambda node, tu: True
+
+    def undo():
+        targets.in_main_file = original
+
+    return undo
+
+
 def patch_warning_threshold():
     """Report ordinary errors too, which fires on every already-injected file."""
 
@@ -737,6 +775,18 @@ SELF_CHECKS = [
         ],
         "must_pass": [
             "remove: unfiltered rule strips the whole file"
+        ]
+    },
+    {
+        "name": "definitions no longer restricted to the main file",
+        "patch": patch_accept_any_file,
+        "must_fail": [
+            "header-inline definition is not injected into the .cpp",
+            "the .cpp definition in that same tree still gets injected"
+        ],
+        "must_pass": [
+            "same tree, relative includes, no include_dirs",
+            "free functions: namespace qualified, bare at file scope"
         ]
     },
     {
