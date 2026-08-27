@@ -148,6 +148,19 @@ Templates go through Python's `str.format`, so a literal brace has to be
 doubled: `if (x) {{` . Leave the trailing newline off — the tool appends the
 marker and the newline itself.
 
+**Editing a template.** Change one and rerun `inject`: the region at the top
+of each matching body is rebuilt from the templates, so the lines come out
+right without a `remove` pass first. The log distinguishes the two:
+
+```
+✨ Injected: AlphaStrategy::Run()   a payload that was not there
+✨ Updated: AlphaStrategy::Run()    a payload whose text had drifted
+✅ Already injected: AlphaStrategy::Run()
+```
+
+Payloads the rule does not name are copied through untouched, so rebuilding
+for one never disturbs another sitting beside it.
+
 **Which payloads a rule acts on when it does not say:**
 
 - `inject` → `scope_trace` alone, so a config written before payloads existed
@@ -282,11 +295,12 @@ their absence — `NetworkMgr::Run` (same method name, unrelated class) and
 `LocalCache::Execute` (same method name, no base class). Two of them run the
 shipped example configs for real rather than a copy of their rules.
 
-**2. Self checks.** Breaks the tool on purpose eight ways — degrade targeted
+**2. Self checks.** Breaks the tool on purpose nine ways — degrade targeted
 remove to the whole-file scan, stop restricting definitions to the main file,
 widen the parse warning past fatal, drop the pre-marker fallback, go blind to
-markers, ignore a rule's payload list, leave placeholders unsubstituted, typo
-a `base_class` in an example config — and confirms the right scenarios go red
+markers, ignore a rule's payload list, leave placeholders unsubstituted, stop
+seeing the region already in a body, typo a `base_class` in an example
+config — and confirms the right scenarios go red
 and the others stay green. A green suite only means something if it can go
 red; this is what stops an assertion from quietly becoming vacuous. Skipped
 when part 1 is already failing, since it asserts *which* scenarios fail.
@@ -330,6 +344,9 @@ Payload scenarios:
 - two payloads land in the order listed, with `{indent}` and every other
   placeholder resolved — asserted against the exact bytes written
 - a rerun adds only the payload that was missing
+- a line that no longer matches its template is re-rendered, one beside it
+  that the rule does not own is not, and an up-to-date region is left
+  byte-identical
 - `remove` naming one payload leaves the other, and its blank separator, alone
 - `remove` naming none reaches a marker whose payload the config no longer
   defines; `remove` naming some spares it

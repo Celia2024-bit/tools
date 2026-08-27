@@ -50,6 +50,7 @@ def main():
         "files_modified": 0,
         "files_excluded": 0,
         "trace_injected": 0,
+        "trace_updated": 0,
         "trace_removed": 0
     }
 
@@ -108,6 +109,10 @@ def main():
 
     logger.log(
         f"Trace Injected : {stats['trace_injected']}"
+    )
+
+    logger.log(
+        f"Trace Updated  : {stats['trace_updated']}"
     )
 
     logger.log(

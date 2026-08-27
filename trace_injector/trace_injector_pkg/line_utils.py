@@ -90,33 +90,6 @@ def markers_in_span(
     return names
 
 
-def insert_point(
-    lines,
-    brace_idx
-):
-    """
-    Where a new payload goes, as (index, needs_separator): after the payloads
-    already at the top of this body, before the blank line separating them
-    from the code.
-
-    `needs_separator` says whether the caller has to append that blank line
-    itself, which it does whenever there is not one there already.
-    """
-
-    begin, end = injected_span(
-        lines,
-        brace_idx
-    )
-
-    if begin == end:
-        return brace_idx + 1, True
-
-    if lines[end - 1].strip() == "":
-        return end - 1, False
-
-    return end, True
-
-
 def payload_span(
     lines,
     brace_idx,
@@ -153,19 +126,6 @@ def payload_span(
         stop = end
 
     return mine[0], stop
-
-
-def already_injected(
-    lines,
-    brace_idx,
-    marker
-):
-
-    return payload_span(
-        lines,
-        brace_idx,
-        marker
-    ) is not None
 
 
 def find_legacy_trace_line(

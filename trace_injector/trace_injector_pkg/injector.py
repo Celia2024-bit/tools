@@ -1,9 +1,10 @@
 from .constants import SCOPE_TRACE
 from .line_utils import (
-    already_injected,
     find_legacy_trace_line,
     find_open_brace_line,
-    insert_point
+    injected_span,
+    marker_of,
+    markers_in_span
 )
 from .payloads import BUILT_IN_PAYLOADS, build_context, render
 from .targets import (
@@ -50,7 +51,7 @@ def inject_trace_into_file(
         encoding="utf-8"
     ).splitlines(True)
 
-    insertions = []
+    rewrites = []
 
     for node, label in iter_target_functions(
         tu,
@@ -78,14 +79,10 @@ def inject_trace_into_file(
             brace_idx
         ) is not None
 
-        missing = [
+        wanted = [
             name
             for name in payload_names
-            if not already_injected(
-                lines,
-                brace_idx,
-                name
-            )
+            if name in payload_table
             and not (
                 name == SCOPE_TRACE
                 and
@@ -93,12 +90,16 @@ def inject_trace_into_file(
             )
         ]
 
-        if not missing:
+        begin, end = injected_span(
+            lines,
+            brace_idx
+        )
 
-            logger.log(
-                f"   ✅ Already injected: {label}()"
-            )
-            continue
+        present = markers_in_span(
+            lines,
+            begin,
+            end
+        )
 
         context = build_context(
             node,
@@ -107,35 +108,73 @@ def inject_trace_into_file(
             brace_idx
         )
 
-        new_lines = []
+        #
+        # The whole injected region is rebuilt rather than patched, which is
+        # what makes editing a payload template take effect on a rerun. The
+        # payloads already there keep their positions; the ones this rule does
+        # not own are copied through untouched.
+        #
+        desired = []
 
-        for name in missing:
+        for name in present + [
+            name
+            for name in wanted
+            if name not in present
+        ]:
 
-            new_lines.extend(
-                render(
-                    name,
-                    payload_table[name],
-                    context
+            if name in wanted:
+
+                desired.extend(
+                    render(
+                        name,
+                        payload_table[name],
+                        context
+                    )
                 )
+
+            else:
+
+                desired.extend(
+                    lines[i]
+                    for i in range(begin, end)
+                    if marker_of(lines[i]) == name
+                )
+
+        #
+        # One blank line between the region and the code, unless the author
+        # already left one there.
+        #
+        if desired and not (
+            end < len(lines)
+            and
+            lines[end].strip() == ""
+        ):
+            desired.append("\n")
+
+        if lines[begin:end] == desired:
+
+            logger.log(
+                f"   ✅ Already injected: {label}()"
             )
+            continue
 
-        at, needs_separator = insert_point(
-            lines,
-            brace_idx
-        )
+        added = [
+            name
+            for name in wanted
+            if name not in present
+        ]
 
-        if needs_separator:
-            new_lines.append("\n")
-
-        insertions.append(
+        rewrites.append(
             (
-                at,
-                new_lines,
-                label
+                begin,
+                end,
+                desired,
+                label,
+                bool(added)
             )
         )
 
-    if not insertions:
+    if not rewrites:
 
         logger.log(
             "   ✅ No changes required."
@@ -145,20 +184,30 @@ def inject_trace_into_file(
     #
     # apply bottom-up so earlier indices stay valid
     #
-    insertions.sort(
+    rewrites.sort(
         key=lambda item: item[0],
         reverse=True
     )
 
-    for at, new_lines, label in insertions:
+    for begin, end, desired, label, added in rewrites:
 
-        lines[at:at] = new_lines
+        lines[begin:end] = desired
 
-        logger.log(
-            f"   ✨ Injected: {label}()"
-        )
+        if added:
 
-        stats["trace_injected"] += 1
+            logger.log(
+                f"   ✨ Injected: {label}()"
+            )
+
+            stats["trace_injected"] += 1
+
+        else:
+
+            logger.log(
+                f"   ✨ Updated: {label}()"
+            )
+
+            stats["trace_updated"] += 1
 
     cpp_file.write_text(
         "".join(lines),

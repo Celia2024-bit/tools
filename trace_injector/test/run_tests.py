@@ -132,6 +132,7 @@ from trace_injector_pkg.payloads import resolve_payloads
 from trace_injector_pkg.processor import process_rule
 
 INJECTED_PREFIX = "   ✨ Injected: "
+UPDATED_PREFIX = "   ✨ Updated: "
 REMOVED_PREFIX = "   ✨ Removed: "
 INCOMPLETE_WARNING = "Base-class matching may be incomplete"
 TRACE_MARKER = "ScopeTrace trace("
@@ -282,6 +283,44 @@ BOTH_INJECTED = (
     "    int a = 1;\n"
 )
 
+#
+# A probe line that no longer matches its template, as if the template had
+# been edited since. Rerunning inject has to bring it back into line, which is
+# the only way to change a payload without removing it first.
+#
+STALE_PROBE = "Probe(\"STALE\");"
+
+STALE_SOURCE = """#include "Legacy.h"
+
+void Legacy::Old()
+{
+    %s  // @tj:probe
+
+    int a = 1;
+}
+
+void Legacy::New()
+{
+    int b = 2;
+}
+""" % STALE_PROBE
+
+STALE_BESIDE_TAG_SOURCE = """#include "Legacy.h"
+
+void Legacy::Old()
+{
+    %s  // @tj:probe
+    Tag("Legacy", "Old");  // @tj:tag
+
+    int a = 1;
+}
+
+void Legacy::New()
+{
+    int b = 2;
+}
+""" % STALE_PROBE
+
 ALIEN_MARKED_SOURCE = """#include "Legacy.h"
 
 void Legacy::Old()
@@ -311,8 +350,10 @@ void Legacy::New()
 #   setup_include_dirs   clang -I paths for `setup`
 #   setup_files          {relative path: text} written before anything runs,
 #                        for a starting state no rule can produce
-#   injected / removed   the EXACT set of qualified names expected in the log
+#   injected / updated /
+#   removed              the EXACT set of qualified names expected in the log
 #   injected_count /
+#   updated_count /
 #   removed_count        override the stat check, for paths that cannot name
 #                        the function they touched
 #   payloads             a config-level "payloads" table for this scenario
@@ -674,6 +715,67 @@ SCENARIOS = [
             ORPHAN_PAYLOAD
         ]
     },
+    #
+    # Editing a payload template and rerunning inject is the only way to
+    # change what is already in the tree without removing it first, so the
+    # injected region is rebuilt rather than skipped on sight.
+    #
+    {
+        "name": "payloads: a stale line is re-rendered, not skipped",
+        "payloads": TWO_PAYLOADS,
+        "setup_files": {
+            LEGACY_CPP: STALE_SOURCE
+        },
+        "rule": {
+            "directory": "test/legacy",
+            "function": "Old",
+            "payloads": [
+                "probe"
+            ]
+        },
+        "injected": set(),
+        "updated": {
+            "Legacy::Old"
+        },
+        "must_contain": [
+            "{\n    Probe(\"Legacy::Old\");  // @tj:probe\n\n    int a = 1;\n"
+        ],
+        "must_not_contain": [
+            STALE_PROBE
+        ]
+    },
+    {
+        "name": "payloads: rebuilding keeps a payload the rule does not own",
+        "payloads": TWO_PAYLOADS,
+        "setup_files": {
+            LEGACY_CPP: STALE_BESIDE_TAG_SOURCE
+        },
+        "rule": {
+            "directory": "test/legacy",
+            "function": "Old",
+            "payloads": [
+                "probe"
+            ]
+        },
+        "updated": {
+            "Legacy::Old"
+        },
+        "must_contain": [
+            BOTH_INJECTED
+        ]
+    },
+    {
+        "name": "payloads: an up-to-date region is left exactly alone",
+        "payloads": TWO_PAYLOADS,
+        "setup": INJECT_BOTH,
+        "rule": INJECT_BOTH,
+        "injected": set(),
+        "updated": set(),
+        "remaining": 0,
+        "must_contain": [
+            BOTH_INJECTED
+        ]
+    },
     {
         "name": "examples: the payloads example writes both, in order",
         "config": "config_payloads_example.json",
@@ -711,6 +813,7 @@ def fresh_stats():
         "files_modified": 0,
         "files_excluded": 0,
         "trace_injected": 0,
+        "trace_updated": 0,
         "trace_removed": 0
     }
 
@@ -998,6 +1101,7 @@ def run_scenario(scenario):
 
     checks = [
         ("injected", INJECTED_PREFIX, "trace_injected"),
+        ("updated", UPDATED_PREFIX, "trace_updated"),
         ("removed", REMOVED_PREFIX, "trace_removed")
     ]
 
@@ -1270,6 +1374,16 @@ def patch_render_verbatim():
     )
 
 
+def patch_span_blind():
+    """Stop seeing the region already at the top of a body."""
+
+    return patch_function(
+        "injected_span",
+        lambda lines, brace_idx: (brace_idx + 1, brace_idx + 1),
+        ["line_utils", "injector"]
+    )
+
+
 SELF_CHECKS = [
     {
         "name": "targeted remove degraded to whole-file",
@@ -1370,6 +1484,24 @@ SELF_CHECKS = [
             #
             "same tree, relative includes, no include_dirs",
             "remove: by function name only"
+        ]
+    },
+    {
+        "name": "injected region no longer recognised",
+        "patch": patch_span_blind,
+        "must_fail": [
+            "payloads: a stale line is re-rendered, not skipped",
+            "payloads: rebuilding keeps a payload the rule does not own",
+            "payloads: an up-to-date region is left exactly alone",
+            "payloads: rerun injects only what is missing"
+        ],
+        "must_pass": [
+            #
+            # Nothing is at the top of a clean body, and the pre-marker path
+            # never consulted the span.
+            #
+            "same tree, relative includes, no include_dirs",
+            "remove: pre-marker trace, targeted by function name"
         ]
     },
     {
