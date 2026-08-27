@@ -1,0 +1,22 @@
+{
+    "inject": [
+        {
+            "directory": "test/src",
+            "file": "",
+            "base_class": "IStrategy",
+            "function": "Run",
+            "payloads": [
+                "scope_trace",
+                "enter_exit"
+            ]
+        }
+    ],
+
+    "payloads": {
+        "enter_exit": {
+            "lines": [
+                "{indent}LOG(INFO) << \"-> {qualified_name}\";"
+            ]
+        }
+    }
+}

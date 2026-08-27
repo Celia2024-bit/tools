@@ -68,6 +68,55 @@ def injected_span(
     return first, end
 
 
+def markers_in_span(
+    lines,
+    begin,
+    end
+):
+    """
+    The payload names present in a span, in the order they appear and without
+    repeats. A payload spanning several lines marks each of them.
+    """
+
+    names = []
+
+    for i in range(begin, end):
+
+        name = marker_of(lines[i])
+
+        if name and name not in names:
+            names.append(name)
+
+    return names
+
+
+def insert_point(
+    lines,
+    brace_idx
+):
+    """
+    Where a new payload goes, as (index, needs_separator): after the payloads
+    already at the top of this body, before the blank line separating them
+    from the code.
+
+    `needs_separator` says whether the caller has to append that blank line
+    itself, which it does whenever there is not one there already.
+    """
+
+    begin, end = injected_span(
+        lines,
+        brace_idx
+    )
+
+    if begin == end:
+        return brace_idx + 1, True
+
+    if lines[end - 1].strip() == "":
+        return end - 1, False
+
+    return end, True
+
+
 def payload_span(
     lines,
     brace_idx,

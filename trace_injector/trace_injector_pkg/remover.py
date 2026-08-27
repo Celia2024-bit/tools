@@ -2,8 +2,10 @@ from .constants import LEGACY_TRACE_PATTERN, SCOPE_TRACE
 from .line_utils import (
     find_legacy_trace_line,
     find_open_brace_line,
+    injected_span,
     legacy_block_end,
     marker_of,
+    markers_in_span,
     payload_span
 )
 from .targets import (
@@ -20,13 +22,17 @@ def remove_trace_from_file(
     target_function="",
     target_base_class="",
     excluded_functions=None,
-    include_dirs=None
+    include_dirs=None,
+    payload_names=None
 ):
     """
     With no function/base_class filter and nothing excluded, strip every
     trace in the file — the cheap line scan, which also catches traces the
     injector did not place. Any filter at all switches to the AST pass, which
     removes exactly the traces the matching inject rule would have added.
+
+    `payload_names` of None means every marker found, whether or not the
+    config still defines a payload by that name. A list narrows it.
     """
 
     if excluded_functions is None:
@@ -49,13 +55,15 @@ def remove_trace_from_file(
             target_function,
             target_base_class,
             excluded_functions,
-            include_dirs
+            include_dirs,
+            payload_names
         )
 
     return _remove_all(
         cpp_file,
         logger,
-        stats
+        stats,
+        payload_names
     )
 
 
@@ -81,26 +89,65 @@ def _write_back(
     stats["files_modified"] += 1
 
 
-def _span_to_delete(
+def _wanted(payload_names, name):
+
+    return payload_names is None or name in payload_names
+
+
+def _spans_to_delete(
     lines,
-    brace_idx
+    brace_idx,
+    payload_names
 ):
     """
-    Half-open span of the trace at the top of this body, or None.
+    The spans to cut from the top of this body: one per payload, or a single
+    span covering the lot when every payload there is wanted.
 
-    Marker first, then the pre-marker layout. Trying the marker first matters:
-    a marked line contains the legacy pattern too, so the order decides
-    whether the blank separator goes with it.
+    Markers first, then the pre-marker layout. The order matters — a marked
+    line contains the legacy pattern too, so trying markers first is what
+    decides whether the blank separator goes with it.
     """
 
-    span = payload_span(
+    begin, end = injected_span(
         lines,
-        brace_idx,
-        SCOPE_TRACE
+        brace_idx
     )
 
-    if span is not None:
-        return span
+    present = markers_in_span(
+        lines,
+        begin,
+        end
+    )
+
+    if present:
+
+        wanted = [
+            name
+            for name in present
+            if _wanted(payload_names, name)
+        ]
+
+        if not wanted:
+            return []
+
+        #
+        # Cutting the whole region in one go also takes the blank separator,
+        # which no individual payload span may claim while others remain.
+        #
+        if len(wanted) == len(present):
+            return [(begin, end)]
+
+        return [
+            payload_span(
+                lines,
+                brace_idx,
+                name
+            )
+            for name in wanted
+        ]
+
+    if not _wanted(payload_names, SCOPE_TRACE):
+        return []
 
     trace_idx = find_legacy_trace_line(
         lines,
@@ -108,12 +155,17 @@ def _span_to_delete(
     )
 
     if trace_idx is None:
-        return None
+        return []
 
-    return trace_idx, legacy_block_end(
-        lines,
-        trace_idx
-    )
+    return [
+        (
+            trace_idx,
+            legacy_block_end(
+                lines,
+                trace_idx
+            )
+        )
+    ]
 
 
 def _remove_targeted(
@@ -123,7 +175,8 @@ def _remove_targeted(
     target_function,
     target_base_class,
     excluded_functions,
-    include_dirs
+    include_dirs,
+    payload_names
 ):
 
     tu = parse_translation_unit(
@@ -143,6 +196,7 @@ def _remove_targeted(
     ).splitlines(True)
 
     deletions = []
+    labels = []
 
     for node, label in iter_target_functions(
         tu,
@@ -161,23 +215,17 @@ def _remove_targeted(
         if brace_idx is None:
             continue
 
-        span = _span_to_delete(
+        spans = _spans_to_delete(
             lines,
-            brace_idx
+            brace_idx,
+            payload_names
         )
 
-        if span is None:
+        if not spans:
             continue
 
-        begin, end = span
-
-        deletions.append(
-            (
-                begin,
-                end,
-                label
-            )
-        )
+        deletions.extend(spans)
+        labels.append(label)
 
     if not deletions:
 
@@ -187,16 +235,21 @@ def _remove_targeted(
         return
 
     #
-    # apply bottom-up so earlier indices stay valid
+    # Bottom-up so earlier indices stay valid. The spans are disjoint, so
+    # sorting the tuples is enough.
     #
-    deletions.sort(
-        key=lambda item: item[0],
+    for begin, end in sorted(
+        deletions,
         reverse=True
-    )
-
-    for begin, end, label in deletions:
-
+    ):
         del lines[begin:end]
+
+    #
+    # One line per function, not per payload: the counter has always meant
+    # "functions whose trace came out", and a function with three payloads
+    # lost one trace, not three.
+    #
+    for label in labels:
 
         logger.log(
             f"   ✨ Removed: {label}()"
@@ -215,7 +268,8 @@ def _remove_targeted(
 def _remove_all(
     cpp_file,
     logger,
-    stats
+    stats,
+    payload_names
 ):
 
     lines = cpp_file.read_text(
@@ -234,7 +288,7 @@ def _remove_all(
             lines[i]
         )
 
-        if name:
+        if name and _wanted(payload_names, name):
 
             #
             # One log line per payload, not per source line: a payload may
@@ -249,10 +303,26 @@ def _remove_all(
             ):
                 end += 1
 
+            #
+            # Take the blank separator only when this was the last payload
+            # standing. A payload left in place above or below still needs it.
+            #
             if (
                 end < len(lines)
                 and
                 lines[end].strip() == ""
+                and
+                (
+                    end + 1 >= len(lines)
+                    or
+                    marker_of(lines[end + 1]) is None
+                )
+                and
+                not (
+                    result
+                    and
+                    marker_of(result[-1])
+                )
             ):
                 end += 1
 
@@ -268,7 +338,13 @@ def _remove_all(
 
             continue
 
-        if LEGACY_TRACE_PATTERN in lines[i]:
+        if (
+            name is None
+            and
+            LEGACY_TRACE_PATTERN in lines[i]
+            and
+            _wanted(payload_names, SCOPE_TRACE)
+        ):
 
             logger.log(
                 "   ✨ Removed ScopeTrace (unmarked)"

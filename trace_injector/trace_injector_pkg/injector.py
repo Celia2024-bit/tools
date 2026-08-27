@@ -1,9 +1,11 @@
-from .constants import SCOPE_TRACE, TRACE_LINES
+from .constants import SCOPE_TRACE
 from .line_utils import (
     already_injected,
     find_legacy_trace_line,
-    find_open_brace_line
+    find_open_brace_line,
+    insert_point
 )
+from .payloads import BUILT_IN_PAYLOADS, build_context, render
 from .targets import (
     iter_target_functions,
     log_parse_problems,
@@ -18,11 +20,19 @@ def inject_trace_into_file(
     stats,
     excluded_functions=None,
     target_base_class="",
-    include_dirs=None
+    include_dirs=None,
+    payload_names=None,
+    payload_table=None
 ):
 
     if excluded_functions is None:
         excluded_functions = set()
+
+    if payload_table is None:
+        payload_table = BUILT_IN_PAYLOADS
+
+    if payload_names is None:
+        payload_names = [SCOPE_TRACE]
 
     tu = parse_translation_unit(
         cpp_file,
@@ -63,23 +73,64 @@ def inject_trace_into_file(
         # The legacy check keeps a rerun over a tree injected by an older
         # version from stacking a second trace on top of the first.
         #
-        if already_injected(
-            lines,
-            brace_idx,
-            SCOPE_TRACE
-        ) or find_legacy_trace_line(
+        legacy_present = find_legacy_trace_line(
             lines,
             brace_idx
-        ) is not None:
+        ) is not None
+
+        missing = [
+            name
+            for name in payload_names
+            if not already_injected(
+                lines,
+                brace_idx,
+                name
+            )
+            and not (
+                name == SCOPE_TRACE
+                and
+                legacy_present
+            )
+        ]
+
+        if not missing:
 
             logger.log(
                 f"   ✅ Already injected: {label}()"
             )
             continue
 
+        context = build_context(
+            node,
+            label,
+            lines,
+            brace_idx
+        )
+
+        new_lines = []
+
+        for name in missing:
+
+            new_lines.extend(
+                render(
+                    name,
+                    payload_table[name],
+                    context
+                )
+            )
+
+        at, needs_separator = insert_point(
+            lines,
+            brace_idx
+        )
+
+        if needs_separator:
+            new_lines.append("\n")
+
         insertions.append(
             (
-                brace_idx + 1,
+                at,
+                new_lines,
                 label
             )
         )
@@ -92,22 +143,16 @@ def inject_trace_into_file(
         return
 
     #
-    # apply bottom-up
+    # apply bottom-up so earlier indices stay valid
     #
     insertions.sort(
-        key=lambda x: x[0],
+        key=lambda item: item[0],
         reverse=True
     )
 
-    for insert_idx, label in insertions:
+    for at, new_lines, label in insertions:
 
-        for entry in reversed(
-            TRACE_LINES
-        ):
-            lines.insert(
-                insert_idx,
-                entry
-            )
+        lines[at:at] = new_lines
 
         logger.log(
             f"   ✨ Injected: {label}()"

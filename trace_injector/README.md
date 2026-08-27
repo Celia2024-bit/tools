@@ -20,7 +20,7 @@ share a method name stay distinguishable:
 
 ## What gets injected
 
-One line at the top of the body, ending in a marker:
+By default one line at the top of the body, ending in a marker:
 
 ```cpp
 void AlphaStrategy::Run()
@@ -40,10 +40,12 @@ five-line block). `remove` still recognises that shape, and `inject` still
 counts it as present rather than stacking a second trace on top, so there is
 nothing to migrate.
 
+What actually goes on the line is configurable — see **Payloads** below.
+
 ## Config
 
 Top level holds exactly one of `inject` or `remove` (never both), plus the
-optional `exclude` and `include_dirs` keys.
+optional `exclude`, `include_dirs` and `payloads` keys.
 
 ```json
 {
@@ -66,9 +68,10 @@ optional `exclude` and `include_dirs` keys.
 
 ### Rule fields
 
-All four are filters, ANDed together. An empty (or absent) field means
+Four of them are filters, ANDed together. An empty (or absent) field means
 "no restriction on this dimension". Both modes accept all four: whatever an
-`inject` rule can put in, the same rule under `remove` takes back out.
+`inject` rule can put in, the same rule under `remove` takes back out. A
+fifth, `payloads`, says *what* to write rather than where — see below.
 
 | Field | Meaning | Empty means |
 |---|---|---|
@@ -92,6 +95,69 @@ Two things to know about it:
 
 `base_class` is rejected in `exclude` entries only — excluding works at the
 directory/file/function level.
+
+### Payloads
+
+A payload is a name plus a list of line templates. Define your own in the
+top-level `payloads` table and name them in a rule:
+
+```json
+{
+    "inject": [
+        {
+            "directory": "test/src",
+            "base_class": "IStrategy",
+            "function": "Run",
+            "payloads": [ "scope_trace", "enter_exit" ]
+        }
+    ],
+
+    "payloads": {
+        "enter_exit": {
+            "lines": [ "{indent}LOG(INFO) << \"-> {qualified_name}\";" ]
+        }
+    }
+}
+```
+
+which writes, in the order listed:
+
+```cpp
+void AlphaStrategy::Run()
+{
+    ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);  // @tj:scope_trace
+    LOG(INFO) << "-> AlphaStrategy::Run";  // @tj:enter_exit
+
+    ...
+}
+```
+
+`scope_trace` is built in, so it needs no definition. Redefine it by name if
+you want a different trace; a name not already in the table adds a payload.
+
+Placeholders in a template:
+
+| Placeholder | Is |
+|---|---|
+| `{indent}` | the body's indentation — the brace line's own, plus four |
+| `{qualified_name}` | `trading::AlphaStrategy::Run` |
+| `{function}` | `Run` |
+| `{class}` | `trading::AlphaStrategy`, empty for a free function |
+
+Templates go through Python's `str.format`, so a literal brace has to be
+doubled: `if (x) {{` . Leave the trailing newline off — the tool appends the
+marker and the newline itself.
+
+**Which payloads a rule acts on when it does not say:**
+
+- `inject` → `scope_trace` alone, so a config written before payloads existed
+  keeps injecting exactly what it always did. Adding a definition to the table
+  changes nothing until a rule names it.
+- `remove` → every marker it finds, whether or not the table still defines a
+  payload by that name. Cleaning up is the one job where forgetting to list
+  something should not leave it behind, and it is the only way to reach lines
+  whose payload definition has since left the config. Name payloads
+  explicitly to remove just those and spare the rest.
 
 ### What `remove` removes
 
@@ -195,6 +261,7 @@ Echoing that would train you to ignore the warning that matters.
 | `config_base_class_example.json` | every `Run()` override under `IStrategy`, no `include_dirs` needed |
 | `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required |
 | `config_base_class_remove_example.json` | the exact undo of the one above — same fields, `inject` swapped for `remove` |
+| `config_payloads_example.json` | a custom payload alongside the built-in one |
 
 ## Tests
 
@@ -215,11 +282,11 @@ their absence — `NetworkMgr::Run` (same method name, unrelated class) and
 `LocalCache::Execute` (same method name, no base class). Two of them run the
 shipped example configs for real rather than a copy of their rules.
 
-**2. Self checks.** Breaks the tool on purpose six ways — degrade targeted
+**2. Self checks.** Breaks the tool on purpose eight ways — degrade targeted
 remove to the whole-file scan, stop restricting definitions to the main file,
 widen the parse warning past fatal, drop the pre-marker fallback, go blind to
-markers, typo a `base_class` in an example config — and confirms the right
-scenarios go red
+markers, ignore a rule's payload list, leave placeholders unsubstituted, typo
+a `base_class` in an example config — and confirms the right scenarios go red
 and the others stay green. A green suite only means something if it can go
 red; this is what stops an assertion from quietly becoming vacuous. Skipped
 when part 1 is already failing, since it asserts *which* scenarios fail.
@@ -258,8 +325,19 @@ for itself since no rule can produce it):
 - a marked line whose payload text the tool knows nothing about is still
   removed — the assertion that removal follows the marker, not the text
 
-Plus a guard that every shipped `config_*example*.json` still passes
-validation.
+Payload scenarios:
+
+- two payloads land in the order listed, with `{indent}` and every other
+  placeholder resolved — asserted against the exact bytes written
+- a rerun adds only the payload that was missing
+- `remove` naming one payload leaves the other, and its blank separator, alone
+- `remove` naming none reaches a marker whose payload the config no longer
+  defines; `remove` naming some spares it
+
+Plus two config guards: every shipped `config_*example*.json` still passes
+validation, and five malformed `payloads` configs are still rejected. Both
+failures are silent ones — an undefined payload injects nothing and reports
+"no changes required".
 
 To add a scenario, append to `SCENARIOS`; the accepted keys are documented
 just above the list. If a change of yours makes an existing scenario fail,

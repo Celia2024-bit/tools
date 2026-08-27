@@ -1,6 +1,7 @@
 from .excludes import get_exclusions_for_file
 from .file_discovery import find_cpp_files
 from .injector import inject_trace_into_file
+from .payloads import BUILT_IN_PAYLOADS, payloads_for_rule
 from .remover import remove_trace_from_file
 
 
@@ -10,7 +11,8 @@ def process_rule(
     exclude_rules,
     logger,
     stats,
-    include_dirs=None
+    include_dirs=None,
+    payload_table=None
 ):
 
     directory = rule.get(
@@ -31,6 +33,15 @@ def process_rule(
     base_class = rule.get(
         "base_class",
         ""
+    )
+
+    if payload_table is None:
+        payload_table = BUILT_IN_PAYLOADS
+
+    payload_names = payloads_for_rule(
+        rule,
+        mode,
+        payload_table
     )
 
     cpp_files = find_cpp_files(
@@ -69,7 +80,8 @@ def process_rule(
                 target_function=function_name,
                 target_base_class=base_class,
                 excluded_functions=excluded_functions,
-                include_dirs=include_dirs
+                include_dirs=include_dirs,
+                payload_names=payload_names
             )
 
         else:
@@ -81,5 +93,7 @@ def process_rule(
                 stats,
                 excluded_functions=excluded_functions,
                 target_base_class=base_class,
-                include_dirs=include_dirs
+                include_dirs=include_dirs,
+                payload_names=payload_names,
+                payload_table=payload_table
             )

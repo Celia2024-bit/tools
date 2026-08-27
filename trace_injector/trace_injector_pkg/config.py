@@ -1,5 +1,7 @@
 import json
 
+from .payloads import resolve_payloads, validate_rule_payloads
+
 
 def load_config(config_file):
 
@@ -15,13 +17,13 @@ def load_config(config_file):
 def resolve_mode_and_rules(config):
     """
     New config format: top-level "inject" or "remove" key holds the rule
-    list (mutually exclusive), plus optional "exclude" and "include_dirs"
-    keys.
+    list (mutually exclusive), plus optional "exclude", "include_dirs" and
+    "payloads" keys.
 
     Both modes accept the same rule fields — remove targets exactly what the
     matching inject rule would have added.
 
-    Returns (mode, rules, exclude_rules, include_dirs).
+    Returns (mode, rules, exclude_rules, include_dirs, payload_table).
     """
 
     has_inject = "inject" in config
@@ -53,4 +55,11 @@ def resolve_mode_and_rules(config):
                 f"only. Offending entry: {exclude_rule}"
             )
 
-    return mode, rules, exclude_rules, include_dirs
+    payload_table = resolve_payloads(config)
+
+    validate_rule_payloads(
+        rules,
+        payload_table
+    )
+
+    return mode, rules, exclude_rules, include_dirs, payload_table

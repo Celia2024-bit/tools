@@ -11,15 +11,10 @@
 MARKER_PREFIX = "// @tj:"
 
 #
-# The one built-in payload. Configurable payloads keep their own names.
+# Name of the built-in payload, defined in payloads.py. Configurable payloads
+# keep their own names.
 #
 SCOPE_TRACE = "scope_trace"
-
-TRACE_LINES = [
-    "    ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);"
-    f"  {MARKER_PREFIX}{SCOPE_TRACE}\n",
-    "\n"
-]
 
 #
 # Traces injected before markers existed: a multi-line block with no marker

@@ -128,6 +128,7 @@ LIBCLANG_IN_USE = configure_libclang()
 
 from trace_injector_pkg import targets
 from trace_injector_pkg.config import load_config, resolve_mode_and_rules
+from trace_injector_pkg.payloads import resolve_payloads
 from trace_injector_pkg.processor import process_rule
 
 INJECTED_PREFIX = "   ✨ Injected: "
@@ -223,6 +224,64 @@ void Legacy::New()
 #
 ALIEN_PAYLOAD = "TotallyUnrelatedPayload(__LINE__);"
 
+#
+# A marker naming a payload the config no longer defines. Removal has to reach
+# it, or deleting a payload definition strands every line it ever wrote.
+#
+ORPHAN_PAYLOAD = "LeftBehind();"
+
+ORPHAN_MARKED_SOURCE = """#include "Legacy.h"
+
+void Legacy::Old()
+{
+    %s  // @tj:long_gone
+
+    int a = 1;
+}
+
+void Legacy::New()
+{
+    int b = 2;
+}
+""" % ORPHAN_PAYLOAD
+
+#
+# Two payloads, exercising every placeholder between them.
+#
+TWO_PAYLOADS = {
+    "probe": {
+        "lines": [
+            "{indent}Probe(\"{qualified_name}\");"
+        ]
+    },
+    "tag": {
+        "lines": [
+            "{indent}Tag(\"{class}\", \"{function}\");"
+        ]
+    }
+}
+
+INJECT_BOTH = {
+    "directory": "test/legacy",
+    "function": "Old",
+    "payloads": [
+        "probe",
+        "tag"
+    ]
+}
+
+#
+# Indent, both placeholders, the marker, listed order, and the blank line that
+# separates the region from the body — all in one assertion.
+#
+BOTH_INJECTED = (
+    "{\n"
+    "    Probe(\"Legacy::Old\");  // @tj:probe\n"
+    "    Tag(\"Legacy\", \"Old\");  // @tj:tag\n"
+    "\n"
+    "    int a = 1;\n"
+)
+
 ALIEN_MARKED_SOURCE = """#include "Legacy.h"
 
 void Legacy::Old()
@@ -256,8 +315,10 @@ void Legacy::New()
 #   injected_count /
 #   removed_count        override the stat check, for paths that cannot name
 #                        the function they touched
+#   payloads             a config-level "payloads" table for this scenario
 #   remaining            traces left in the fixtures afterwards
-#   must_not_contain     text that must be gone from the fixtures afterwards,
+#   must_contain /
+#   must_not_contain     text that must (not) be in some fixture afterwards,
 #                        for payloads `remaining` does not count
 #   warns                whether the incomplete-match warning must appear
 #
@@ -520,6 +581,112 @@ SCENARIOS = [
         "must_not_contain": [
             ALIEN_PAYLOAD
         ]
+    },
+    #
+    # Configurable payloads. The built-in scope_trace must stay out of the
+    # way when a rule names its own, which is why `remaining` is 0 in the
+    # inject scenarios below.
+    #
+    {
+        "name": "payloads: listed order, indent and every placeholder",
+        "payloads": TWO_PAYLOADS,
+        "rule": INJECT_BOTH,
+        "injected": {
+            "Legacy::Old"
+        },
+        "remaining": 0,
+        "must_contain": [
+            BOTH_INJECTED
+        ]
+    },
+    {
+        "name": "payloads: rerun injects only what is missing",
+        "payloads": TWO_PAYLOADS,
+        "setup": {
+            "directory": "test/legacy",
+            "function": "Old",
+            "payloads": [
+                "probe"
+            ]
+        },
+        "rule": INJECT_BOTH,
+        "injected": {
+            "Legacy::Old"
+        },
+        "must_contain": [
+            BOTH_INJECTED
+        ]
+    },
+    {
+        "name": "remove: a named payload, leaving the other in place",
+        "payloads": TWO_PAYLOADS,
+        "setup": INJECT_BOTH,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/legacy",
+            "function": "Old",
+            "payloads": [
+                "probe"
+            ]
+        },
+        "removed": {
+            "Legacy::Old"
+        },
+        "must_contain": [
+            "{\n    Tag(\"Legacy\", \"Old\");  // @tj:tag\n\n    int a = 1;\n"
+        ],
+        "must_not_contain": [
+            "Probe("
+        ]
+    },
+    {
+        "name": "remove: no payloads listed reaches an orphaned marker",
+        "setup_files": {
+            LEGACY_CPP: ORPHAN_MARKED_SOURCE
+        },
+        "mode": "remove",
+        "rule": {
+            "directory": "test/legacy",
+            "function": "Old"
+        },
+        "removed": {
+            "Legacy::Old"
+        },
+        "must_not_contain": [
+            ORPHAN_PAYLOAD
+        ]
+    },
+    {
+        "name": "remove: payloads listed spares a marker not among them",
+        "setup_files": {
+            LEGACY_CPP: ORPHAN_MARKED_SOURCE
+        },
+        "mode": "remove",
+        "rule": {
+            "directory": "test/legacy",
+            "function": "Old",
+            "payloads": [
+                "scope_trace"
+            ]
+        },
+        "removed": set(),
+        "must_contain": [
+            ORPHAN_PAYLOAD
+        ]
+    },
+    {
+        "name": "examples: the payloads example writes both, in order",
+        "config": "config_payloads_example.json",
+        "injected": {
+            "StrategyEngine::Run",
+            "AlphaStrategy::Run"
+        },
+        "remaining": 2,
+        "must_contain": [
+            "    ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);"
+            "  // @tj:scope_trace\n"
+            "    LOG(INFO) << \"-> AlphaStrategy::Run\";  // @tj:enter_exit\n"
+        ]
     }
 ]
 
@@ -623,6 +790,98 @@ def check_example_configs():
     return failures
 
 
+#
+# Configs that must be rejected. Every one of these fails silently if it is
+# accepted: an undefined payload injects nothing and reports no changes
+# required, and a name carrying the marker text makes the line unremovable.
+#
+BAD_CONFIGS = [
+    (
+        "rule names an undefined payload",
+        {
+            "inject": [
+                {
+                    "directory": "x",
+                    "payloads": [
+                        "nope"
+                    ]
+                }
+            ]
+        }
+    ),
+    (
+        "payload with no lines",
+        {
+            "inject": [],
+            "payloads": {
+                "p": {}
+            }
+        }
+    ),
+    (
+        "payloads is a list, not an object",
+        {
+            "inject": [],
+            "payloads": [
+                "p"
+            ]
+        }
+    ),
+    (
+        "payload line is not a string",
+        {
+            "inject": [],
+            "payloads": {
+                "p": {
+                    "lines": [
+                        42
+                    ]
+                }
+            }
+        }
+    ),
+    (
+        "payload name carries the marker text",
+        {
+            "inject": [],
+            "payloads": {
+                "p // @tj:q": {
+                    "lines": [
+                        "x"
+                    ]
+                }
+            }
+        }
+    )
+]
+
+
+def check_config_rejections():
+
+    failures = []
+
+    for description, config in BAD_CONFIGS:
+
+        try:
+            resolve_mode_and_rules(config)
+
+        except ValueError:
+            continue
+
+        except Exception as error:
+            failures.append(
+                f"{description}: raised {type(error).__name__}, "
+                "expected ValueError"
+            )
+            continue
+
+        failures.append(
+            f"{description}: accepted"
+        )
+
+    return failures
+
+
 def check_fixtures_clean(saved=None):
     """
     The fixtures carry no traces at rest. Before the run that means the
@@ -653,7 +912,13 @@ def check_fixtures_clean(saved=None):
 def apply_config(config_file, logger, stats):
     """Run every rule in a shipped config file, the way the CLI does."""
 
-    mode, rules, exclude_rules, include_dirs = resolve_mode_and_rules(
+    (
+        mode,
+        rules,
+        exclude_rules,
+        include_dirs,
+        payload_table
+    ) = resolve_mode_and_rules(
         load_config(ROOT / config_file)
     )
 
@@ -665,7 +930,8 @@ def apply_config(config_file, logger, stats):
             exclude_rules,
             logger,
             stats,
-            include_dirs=include_dirs
+            include_dirs=include_dirs,
+            payload_table=payload_table
         )
 
 
@@ -678,6 +944,12 @@ def run_scenario(scenario):
             text,
             encoding="utf-8"
         )
+
+    payload_table = resolve_payloads(
+        {
+            "payloads": scenario.get("payloads")
+        }
+    )
 
     if scenario.get("setup_config"):
 
@@ -695,7 +967,8 @@ def run_scenario(scenario):
             [],
             CaptureLogger(),
             fresh_stats(),
-            include_dirs=scenario.get("setup_include_dirs", [])
+            include_dirs=scenario.get("setup_include_dirs", []),
+            payload_table=payload_table
         )
 
     logger = CaptureLogger()
@@ -717,7 +990,8 @@ def run_scenario(scenario):
             scenario.get("exclude", []),
             logger,
             stats,
-            include_dirs=scenario.get("include_dirs", [])
+            include_dirs=scenario.get("include_dirs", []),
+            payload_table=payload_table
         )
 
     failures = []
@@ -780,6 +1054,23 @@ def run_scenario(scenario):
 
             failures.append(
                 f"{needle!r} still present in {', '.join(left)}"
+            )
+
+    for needle in scenario.get("must_contain", []):
+
+        found = any(
+            needle in path.read_text(encoding="utf-8")
+            for path in fixture_files()
+        )
+
+        if not found:
+
+            failures.append(
+                f"not found in any fixture:\n"
+                + "\n".join(
+                    f"      | {line}"
+                    for line in needle.splitlines()
+                )
             )
 
     warned = INCOMPLETE_WARNING in logger.text
@@ -948,6 +1239,37 @@ def patch_blind_to_markers():
     )
 
 
+def patch_ignore_rule_payloads():
+    """Act as if no rule ever named a payload of its own."""
+
+    from trace_injector_pkg.constants import SCOPE_TRACE
+
+    return patch_function(
+        "payloads_for_rule",
+        lambda rule, mode, table: [SCOPE_TRACE],
+        ["payloads", "processor"]
+    )
+
+
+def patch_render_verbatim():
+    """Emit templates unsubstituted, so every placeholder stays literal."""
+
+    from trace_injector_pkg.constants import MARKER_PREFIX
+
+    def verbatim(name, spec, context):
+
+        return [
+            f"{template}  {MARKER_PREFIX}{name}\n"
+            for template in spec["lines"]
+        ]
+
+    return patch_function(
+        "render",
+        verbatim,
+        ["payloads", "injector"]
+    )
+
+
 SELF_CHECKS = [
     {
         "name": "targeted remove degraded to whole-file",
@@ -1014,6 +1336,40 @@ SELF_CHECKS = [
         "must_pass": [
             "same tree, relative includes, no include_dirs",
             "remove: pre-marker trace, targeted by function name"
+        ]
+    },
+    {
+        "name": "rule payload list ignored",
+        "patch": patch_ignore_rule_payloads,
+        "must_fail": [
+            "payloads: listed order, indent and every placeholder",
+            "payloads: rerun injects only what is missing",
+            "remove: a named payload, leaving the other in place",
+            "remove: no payloads listed reaches an orphaned marker"
+        ],
+        "must_pass": [
+            #
+            # This rule already names scope_trace and nothing else, so
+            # forcing that list changes nothing about it.
+            #
+            "remove: payloads listed spares a marker not among them",
+            "remove: by function name only"
+        ]
+    },
+    {
+        "name": "placeholders left unsubstituted",
+        "patch": patch_render_verbatim,
+        "must_fail": [
+            "payloads: listed order, indent and every placeholder",
+            "remove: a named payload, leaving the other in place"
+        ],
+        "must_pass": [
+            #
+            # The built-in payload still contains "ScopeTrace trace(" with
+            # {indent} left literal, so nothing counting traces notices.
+            #
+            "same tree, relative includes, no include_dirs",
+            "remove: by function name only"
         ]
     },
     {
@@ -1100,6 +1456,10 @@ def main():
     report.record(
         "example configs pass validation",
         check_example_configs()
+    )
+    report.record(
+        "broken configs are rejected",
+        check_config_rejections()
     )
 
     saved = snapshot_fixtures()
