@@ -53,75 +53,11 @@ sys.stdout.reconfigure(
 #
 # ---------------------------------------------------------------- libclang
 #
-# The clang python bindings load libclang through the OS loader, which does
-# not look inside site-packages. Finding it here rather than making every
-# caller export a variable is the difference between "run this file" and
-# "run this file after reading the README".
+# Shared with the CLI rather than kept here: the bindings have to be pointed
+# at a library they can load before anything parses, and a harness that did
+# it for itself was how the CLI came to be broken without a test noticing.
 #
-def libclang_candidates():
-
-    import clang
-
-    names = {
-        "win32": "libclang.dll",
-        "darwin": "libclang.dylib"
-    }
-
-    name = names.get(sys.platform, "libclang.so")
-
-    yield Path(clang.__file__).parent / "native" / name
-
-    for base in (
-        Path(sys.prefix),
-        Path(sys.prefix) / "Library",
-        Path("C:/Program Files/LLVM"),
-        Path("/usr/lib/llvm-14"),
-        Path("/usr/lib"),
-        Path("/usr/local/lib"),
-        Path("/opt/homebrew/lib")
-    ):
-        yield base / "bin" / name
-        yield base / "lib" / name
-        yield base / name
-
-
-def configure_libclang():
-    """Returns the path in use, or None if the default loader already works."""
-
-    from clang import cindex
-
-    explicit = os.environ.get(
-        "TRACE_INJECTOR_LIBCLANG",
-        ""
-    )
-
-    if explicit:
-        cindex.Config.set_library_file(explicit)
-        return explicit
-
-    try:
-        cindex.Index.create()
-        return None
-    except cindex.LibclangError:
-        pass
-
-    for candidate in libclang_candidates():
-
-        if not candidate.is_file():
-            continue
-
-        cindex.Config.set_library_file(str(candidate))
-
-        try:
-            cindex.Index.create()
-            return str(candidate)
-        except cindex.LibclangError:
-            cindex.Config.loaded = False
-
-    raise SystemExit(
-        "Could not load libclang. Install it (pip install libclang) or "
-        "set TRACE_INJECTOR_LIBCLANG to the shared library."
-    )
+from trace_injector_pkg.libclang_setup import configure as configure_libclang
 
 
 LIBCLANG_IN_USE = configure_libclang()
@@ -447,6 +383,22 @@ CTOR_INJECTED = (
     "    ScopeTrace trace(__FILE__, __LINE__, \"Kinds::Kinds\");"
     "  // @tj:scope_trace\n"
 )
+
+#
+# test/stdlib exists for one reason: <string> and <vector> bring in cursors
+# whose kind ids are newer than the bindings' table, and reading .kind on one
+# raises ValueError instead of returning a value.
+#
+INJECT_ALL_STDLIB = {
+    "directory": "test/stdlib",
+    "function": ""
+}
+
+ALL_STDLIB_FUNCTIONS = {
+    "Stdlib::Describe",
+    "Stdlib::Split",
+    "Join"
+}
 
 ALIEN_MARKED_SOURCE = """#include "Legacy.h"
 
@@ -1188,6 +1140,31 @@ SCENARIOS = [
         "must_contain": [
             "#include \"ScopeTrace.h\"  // @tj:scope_trace\n"
         ]
+    },
+    #
+    # Standard library headers. Not a feature — a fixture that reaches the
+    # cursor kinds the bindings cannot name, which every real .cpp does and no
+    # other fixture here did.
+    #
+    {
+        "name": "stdlib: a file including <string> is injected, not crashed on",
+        "rule": INJECT_ALL_STDLIB,
+        "injected": ALL_STDLIB_FUNCTIONS,
+        "must_contain": [
+            "ScopeTrace trace(__FILE__, __LINE__, \"Stdlib::Split\");"
+        ]
+    },
+    {
+        "name": "stdlib: and comes back out again",
+        "setup": INJECT_ALL_STDLIB,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/stdlib",
+            "function": ""
+        },
+        "removed": set(),
+        "removed_count": len(ALL_STDLIB_FUNCTIONS),
+        "remaining": 0
     },
     {
         "name": "examples: the parameter check example names what it can",
@@ -1932,6 +1909,20 @@ def patch_one_line_blind():
     )
 
 
+def patch_kind_read_unguarded():
+    """
+    Read cursor.kind directly, the way this did before the guard. Any fixture
+    that stays inside its own headers is unaffected; one that includes <string>
+    reaches a kind the bindings cannot name and the read raises.
+    """
+
+    return patch_function(
+        "kind_of",
+        lambda cursor: cursor.kind,
+        ["cursors", "targets", "class_hierarchy"]
+    )
+
+
 def patch_payload_uses_function_macro():
     """
     Put __FUNCTION__ back in the built-in payload, the way it read before the
@@ -2156,6 +2147,22 @@ SELF_CHECKS = [
             #
             "kinds: a template nothing instantiates is still found",
             "params: a payload naming no parameter goes in everywhere"
+        ]
+    },
+    {
+        "name": "cursor kinds read without the guard",
+        "patch": patch_kind_read_unguarded,
+        "must_fail": [
+            "stdlib: a file including <string> is injected, not crashed on",
+            "stdlib: and comes back out again"
+        ],
+        "must_pass": [
+            #
+            # Every other fixture stays inside headers it wrote itself, which
+            # is exactly why this crash survived so long.
+            #
+            "same tree, relative includes, no include_dirs",
+            "kinds: constructor, destructor and template all take a payload"
         ]
     },
     {

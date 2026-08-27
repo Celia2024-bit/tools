@@ -1,5 +1,7 @@
 from clang import cindex
 
+from .cursors import kind_of
+
 
 CLASS_KINDS = (
     cindex.CursorKind.CLASS_DECL,
@@ -17,7 +19,7 @@ def owning_class(method_node):
     if parent is None:
         return None
 
-    if parent.kind not in CLASS_KINDS:
+    if kind_of(parent) not in CLASS_KINDS:
         return None
 
     return parent
@@ -38,7 +40,7 @@ def qualified_name(cursor):
 
     while parent is not None:
 
-        if parent.kind not in CLASS_KINDS + (
+        if kind_of(parent) not in CLASS_KINDS + (
             cindex.CursorKind.NAMESPACE,
         ):
             break
@@ -71,7 +73,7 @@ def _direct_bases(class_cursor):
 
     for child in definition.get_children():
 
-        if child.kind != cindex.CursorKind.CXX_BASE_SPECIFIER:
+        if kind_of(child) != cindex.CursorKind.CXX_BASE_SPECIFIER:
             continue
 
         base = child.type.get_declaration()
@@ -79,7 +81,7 @@ def _direct_bases(class_cursor):
         if base is None:
             continue
 
-        if base.kind == cindex.CursorKind.NO_DECL_FOUND:
+        if kind_of(base) == cindex.CursorKind.NO_DECL_FOUND:
             continue
 
         yield base

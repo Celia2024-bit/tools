@@ -9,6 +9,7 @@ import os
 from clang import cindex
 
 from .class_hierarchy import is_or_derives_from, owning_class, qualified_name
+from .cursors import kind_of
 from .file_discovery import match_function
 from .line_utils import scan_for_body_brace
 
@@ -152,7 +153,7 @@ def parameters_of(node):
     return [
         child
         for child in node.get_children()
-        if child.kind == cindex.CursorKind.PARM_DECL
+        if kind_of(child) == cindex.CursorKind.PARM_DECL
     ]
 
 
@@ -169,7 +170,7 @@ def body_open_brace(node, lines):
 
     for child in node.get_children():
 
-        if child.kind == cindex.CursorKind.COMPOUND_STMT:
+        if kind_of(child) == cindex.CursorKind.COMPOUND_STMT:
             return child.extent.start.line - 1
 
     return scan_for_body_brace(
@@ -195,7 +196,7 @@ def iter_target_functions(
 
     for node in tu.cursor.walk_preorder():
 
-        if node.kind not in FUNCTION_KINDS:
+        if kind_of(node) not in FUNCTION_KINDS:
             continue
 
         if not in_main_file(node, tu):
@@ -205,7 +206,7 @@ def iter_target_functions(
         # A bodyless kind gets no say here; body_open_brace decides for it,
         # and the caller skips what has no body.
         #
-        if node.kind not in BODYLESS_KINDS and not node.is_definition():
+        if kind_of(node) not in BODYLESS_KINDS and not node.is_definition():
             continue
 
         if not match_function(

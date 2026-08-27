@@ -374,7 +374,13 @@ matters.
 - **A payload's header has to be spelled by hand.** The tool adds and removes
   the `#include` a payload declares, but it cannot work out the path for you.
   Get it wrong and the file no longer parses, which costs you `base_class`
-  matching on the next run (with a warning).
+  matching on the next run (with a warning). The built-in payload asks for
+  `"ScopeTrace.h"` unqualified, so put the directory holding it on the
+  compiler's include path (`-Iutil` in this tree) rather than writing a
+  relative path that is only correct for files at one depth.
+- **Overriding a payload's `include` means restating its `lines`.** A `payloads`
+  entry replaces the built-in definition rather than merging with it, so
+  changing only the header still requires copying the line across.
 
 ## Examples
 
@@ -407,16 +413,16 @@ their absence — `NetworkMgr::Run` (same method name, unrelated class) and
 `LocalCache::Execute` (same method name, no base class). Three of them run the
 shipped example configs for real rather than a copy of their rules.
 
-**2. Self checks.** Breaks the tool on purpose fifteen ways — degrade targeted
+**2. Self checks.** Breaks the tool on purpose sixteen ways — degrade targeted
 remove to the whole-file scan, stop restricting definitions to the main file,
 widen the parse warning past fatal, drop the pre-marker fallback, go blind to
 markers, ignore a rule's payload list, leave placeholders unsubstituted, stop
 seeing the region already in a body, keep every injected `#include` forever,
 go blind to an `#include` already present, let parameter payloads into
 functions whose parameters cannot be named, find the body brace by scanning
-text instead of asking the AST, treat a one-line body as having room, put
-`__FUNCTION__` back in the built-in payload, typo a
-`base_class` in an example config — and confirms the right scenarios go red
+text instead of asking the AST, treat a one-line body as having room, read
+a cursor's kind without the guard, put `__FUNCTION__` back in the built-in
+payload, typo a `base_class` in an example config — and confirms the right scenarios go red
 and the others stay green. A green suite only means something if it can go
 red; this is what stops an assertion from quietly becoming vacuous. Skipped
 when part 1 is already failing, since it asserts *which* scenarios fail.
@@ -505,6 +511,12 @@ Definition-kind scenarios (`test/kinds`, one member per shape a body can take):
 - everything injected comes back out, include and all, and a rule naming the
   destructor takes only that one
 
+Standard-library scenarios (`test/stdlib`, the only fixture that includes
+`<string>`):
+
+- a file reaching cursor kinds the python bindings cannot name is injected
+  into rather than crashed on, and everything comes back out again
+
 Plus two config guards: every shipped `config_*example*.json` still passes
 validation, and eight malformed `payloads` configs are still rejected. Both
 failures are silent ones — an undefined payload injects nothing and reports
@@ -515,8 +527,9 @@ just above the list. If a change of yours makes an existing scenario fail,
 read the diff it prints before editing the expectation — that diff is the
 whole point of the file.
 
-Autodetection covers site-packages and the usual LLVM install dirs. If
-libclang lives somewhere else, point at it explicitly:
+Autodetection covers site-packages and the usual LLVM install dirs, and is the
+same code the CLI uses (`trace_injector_pkg/libclang_setup.py`). If libclang
+lives somewhere else, point at it explicitly:
 
 ```
 TRACE_INJECTOR_LIBCLANG=C:/Python/Lib/site-packages/clang/native/libclang.dll \
