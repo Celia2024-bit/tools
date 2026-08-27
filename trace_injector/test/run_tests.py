@@ -190,6 +190,54 @@ EXECUTOR_OVERRIDES = {
     "FastExecutor::Execute"
 }
 
+LEGACY_CPP = "test/legacy/Legacy.cpp"
+
+#
+# What the injector wrote before markers existed: a five-line block with
+# nothing on it to say the tool put it there. Removal has to keep recognising
+# this shape, or upgrading the tool orphans every trace already in a tree.
+#
+LEGACY_SOURCE = """#include "Legacy.h"
+
+void Legacy::Old()
+{
+    ScopeTrace trace(
+        __FILE__,
+        __LINE__,
+        __FUNCTION__
+    );
+
+    int a = 1;
+}
+
+void Legacy::New()
+{
+    int b = 2;
+}
+"""
+
+#
+# A marked line whose payload text nothing in the tool knows about. Removal
+# must delete it on the strength of the marker alone; a remover still matching
+# on "ScopeTrace trace(" finds nothing here.
+#
+ALIEN_PAYLOAD = "TotallyUnrelatedPayload(__LINE__);"
+
+ALIEN_MARKED_SOURCE = """#include "Legacy.h"
+
+void Legacy::Old()
+{
+    int a = 1;
+}
+
+void Legacy::New()
+{
+    %s  // @tj:scope_trace
+
+    int b = 2;
+}
+""" % ALIEN_PAYLOAD
+
 #
 # Scenario keys, all optional except name and one of rule/config:
 #
@@ -202,11 +250,15 @@ EXECUTOR_OVERRIDES = {
 #   setup                a rule injected first, to give remove something to do
 #   setup_config         same, but from a shipped config file
 #   setup_include_dirs   clang -I paths for `setup`
+#   setup_files          {relative path: text} written before anything runs,
+#                        for a starting state no rule can produce
 #   injected / removed   the EXACT set of qualified names expected in the log
 #   injected_count /
 #   removed_count        override the stat check, for paths that cannot name
 #                        the function they touched
 #   remaining            traces left in the fixtures afterwards
+#   must_not_contain     text that must be gone from the fixtures afterwards,
+#                        for payloads `remaining` does not count
 #   warns                whether the incomplete-match warning must appear
 #
 SCENARIOS = [
@@ -405,6 +457,69 @@ SCENARIOS = [
         ],
         "removed": ALL_SRC_FUNCTIONS - ALL_RUNS,
         "remaining": len(ALL_RUNS)
+    },
+    #
+    # Markers, from both ends: a trace written before they existed still has
+    # to come out, and a marked line the tool knows nothing else about still
+    # has to come out.
+    #
+    {
+        "name": "remove: pre-marker trace, targeted by function name",
+        "setup_files": {
+            LEGACY_CPP: LEGACY_SOURCE
+        },
+        "mode": "remove",
+        "rule": {
+            "directory": "test/legacy",
+            "function": "Old"
+        },
+        "removed": {
+            "Legacy::Old"
+        },
+        "remaining": 0
+    },
+    {
+        "name": "remove: pre-marker trace, unfiltered whole-file scan",
+        "setup_files": {
+            LEGACY_CPP: LEGACY_SOURCE
+        },
+        "mode": "remove",
+        "rule": {
+            "directory": "test/legacy",
+            "function": ""
+        },
+        "removed": set(),
+        "removed_count": 1,
+        "remaining": 0
+    },
+    {
+        "name": "inject does not stack on top of a pre-marker trace",
+        "setup_files": {
+            LEGACY_CPP: LEGACY_SOURCE
+        },
+        "rule": {
+            "directory": "test/legacy",
+            "function": "Old"
+        },
+        "injected": set(),
+        "remaining": 1
+    },
+    {
+        "name": "remove: found by marker, not by payload text",
+        "setup_files": {
+            LEGACY_CPP: ALIEN_MARKED_SOURCE
+        },
+        "mode": "remove",
+        "rule": {
+            "directory": "test/legacy",
+            "function": "New"
+        },
+        "removed": {
+            "Legacy::New"
+        },
+        "must_not_contain": [
+            ALIEN_PAYLOAD
+        ]
     }
 ]
 
@@ -557,6 +672,13 @@ def apply_config(config_file, logger, stats):
 def run_scenario(scenario):
     """Returns a list of failure descriptions (empty means the test passed)."""
 
+    for relative, text in scenario.get("setup_files", {}).items():
+
+        (ROOT / relative).write_text(
+            text,
+            encoding="utf-8"
+        )
+
     if scenario.get("setup_config"):
 
         apply_config(
@@ -644,6 +766,20 @@ def run_scenario(scenario):
             failures.append(
                 f"{remaining} traces left in the fixtures, "
                 f"expected {scenario['remaining']}"
+            )
+
+    for needle in scenario.get("must_not_contain", []):
+
+        left = [
+            path.relative_to(ROOT).as_posix()
+            for path in fixture_files()
+            if needle in path.read_text(encoding="utf-8")
+        ]
+
+        if left:
+
+            failures.append(
+                f"{needle!r} still present in {', '.join(left)}"
             )
 
     warned = INCOMPLETE_WARNING in logger.text
@@ -762,6 +898,56 @@ def patch_example_base_class():
     return undo
 
 
+def patch_function(name, replacement, module_names):
+    """
+    Swap a function in every module that imported it by name. `from x import
+    f` binds f in the importer, so patching x alone leaves the callers holding
+    the original.
+    """
+
+    import importlib
+
+    modules = [
+        importlib.import_module(f"trace_injector_pkg.{module_name}")
+        for module_name in module_names
+    ]
+
+    originals = [
+        getattr(module, name)
+        for module in modules
+    ]
+
+    for module in modules:
+        setattr(module, name, replacement)
+
+    def undo():
+
+        for module, original in zip(modules, originals):
+            setattr(module, name, original)
+
+    return undo
+
+
+def patch_drop_legacy_fallback():
+    """Recognise marked payloads only, forgetting the pre-marker layout."""
+
+    return patch_function(
+        "find_legacy_trace_line",
+        lambda lines, brace_idx: None,
+        ["line_utils", "remover", "injector"]
+    )
+
+
+def patch_blind_to_markers():
+    """Stop reading the marker, leaving removal to match on payload text."""
+
+    return patch_function(
+        "marker_of",
+        lambda line: None,
+        ["line_utils", "remover"]
+    )
+
+
 SELF_CHECKS = [
     {
         "name": "targeted remove degraded to whole-file",
@@ -799,6 +985,35 @@ SELF_CHECKS = [
         "must_pass": [
             "separate include root, include_dirs given",
             "separate include root, include_dirs MISSING -> warn, no writes"
+        ]
+    },
+    {
+        "name": "legacy fallback dropped",
+        "patch": patch_drop_legacy_fallback,
+        "must_fail": [
+            "remove: pre-marker trace, targeted by function name",
+            "inject does not stack on top of a pre-marker trace"
+        ],
+        "must_pass": [
+            #
+            # The unfiltered scan matches the legacy text itself, so it is
+            # deliberately not affected — the fallback that just vanished is
+            # the targeted one.
+            #
+            "remove: pre-marker trace, unfiltered whole-file scan",
+            "remove: by function name only"
+        ]
+    },
+    {
+        "name": "blind to markers",
+        "patch": patch_blind_to_markers,
+        "must_fail": [
+            "remove: found by marker, not by payload text",
+            "remove: by function name only"
+        ],
+        "must_pass": [
+            "same tree, relative includes, no include_dirs",
+            "remove: pre-marker trace, targeted by function name"
         ]
     },
     {
