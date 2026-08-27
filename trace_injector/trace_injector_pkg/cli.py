@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from logger import Logger
+from .logger import Logger
 
 from .config import load_config, resolve_mode_and_rules
 from .processor import process_rule
