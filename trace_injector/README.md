@@ -44,6 +44,21 @@ The guard itself is `util/ScopeTrace.h`: an RAII object that logs on the way in,
 and on the way out from its destructor so that an early `return` is still
 reported. Compile with `-DSCOPE_TRACE_ENABLED=0` and it collapses to nothing.
 
+Every file gets the same unqualified `#include "ScopeTrace.h"`, whatever depth
+it sits at. The path belongs in the config's `include_dirs`, not in the include
+line — one place to change, and correct for every file rather than for files at
+one depth:
+
+```json
+{
+    "inject": [
+        { "directory": "src", "function": "" }
+    ],
+
+    "include_dirs": [ "util" ]
+}
+```
+
 The marker is what `remove` looks for. It names the payload that produced the
 line, so removal never has to recognise the payload's own text — leave the
 marker alone and an injected line stays removable however it is later worded.
@@ -305,9 +320,13 @@ These answer different questions and are easy to confuse:
   the compiler's `-I`. Affects parsing only; never selects a file for
   injection.
 
-You need `include_dirs` when an `#include` is written relative to a project
-include root rather than to the source file itself. The two fixture trees
-under `test/` exist to show exactly this contrast.
+You need `include_dirs` in two cases. The first is an `#include` written
+relative to a project include root rather than to the source file itself; the
+two fixture trees under `test/` exist to show exactly that contrast. The second
+is the payload's own header — injected unqualified into files at every depth, so
+this is the one place that says where it lives. Leave it out and the second run
+cannot resolve what the first run added, which degrades `base_class` matching
+with a warning.
 
 **Interface next to the sources — `include_dirs` NOT needed** (`test/src`):
 
@@ -359,28 +378,21 @@ through them, and a payload whose header you have not declared produces one
 per injected line. Echoing those would train you to ignore the warning that
 matters.
 
-## Known limitations
+## Scope and known limitations
 
-- **Headers are not modified.** Only `.cpp` files are scanned and written, so
-  a virtual function defined inline in a header (`void Run() override { ... }`)
-  is never given a trace. This bites hardest with `base_class`, since
-  subclass overrides are often one-liners in headers. Such definitions are
-  recognised during parsing and deliberately skipped — placing them by their
-  header line number into the `.cpp` would land the trace in an unrelated
-  function.
+**`.cpp` files only.** Headers are read, never written. A function defined
+inline in a header is therefore out of scope by design, not pending: such
+definitions are recognised during parsing and skipped, because placing them by
+their header line number into the `.cpp` would land the payload in an unrelated
+function.
+
 - **A body on one line is skipped.** `void Tick() { return; }` gets a warning
   and nothing else — see **What counts as a function**. Give it braces on their
   own lines and a rerun picks it up.
 - **A payload's header has to be spelled by hand.** The tool adds and removes
   the `#include` a payload declares, but it cannot work out the path for you.
   Get it wrong and the file no longer parses, which costs you `base_class`
-  matching on the next run (with a warning). The built-in payload asks for
-  `"ScopeTrace.h"` unqualified, so put the directory holding it on the
-  compiler's include path (`-Iutil` in this tree) rather than writing a
-  relative path that is only correct for files at one depth.
-- **Overriding a payload's `include` means restating its `lines`.** A `payloads`
-  entry replaces the built-in definition rather than merging with it, so
-  changing only the header still requires copying the line across.
+  matching on the next run (with a warning).
 
 ## Examples
 
@@ -391,6 +403,7 @@ matters.
 | `config_base_class_example.json` | every `Run()` override under `IStrategy`, no `include_dirs` needed |
 | `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required |
 | `config_base_class_remove_example.json` | the exact undo of the one above — same fields, `inject` swapped for `remove` |
+| `config_scope_trace_example.json` | the real thing: trace every function in `src`, with `util` in `include_dirs` so the injected `#include "ScopeTrace.h"` resolves |
 | `config_payloads_example.json` | a custom payload alongside the built-in one |
 | `config_param_check_example.json` | a payload that names the parameters it was handed |
 

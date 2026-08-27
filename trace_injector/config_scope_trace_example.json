@@ -1,0 +1,15 @@
+{
+    "inject": [
+        {
+            "directory": "../../src",
+            "file": "",
+            "base_class": "",
+            "function": ""
+        }
+    ],
+
+    "include_dirs": [
+        "../../src",
+        "../../util"
+    ]
+}
