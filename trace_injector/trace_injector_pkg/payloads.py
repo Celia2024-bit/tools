@@ -26,7 +26,8 @@ BUILT_IN_PAYLOADS = {
     SCOPE_TRACE: {
         "lines": [
             "{indent}ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);"
-        ]
+        ],
+        "include": "ScopeTrace.h"
     }
 }
 
@@ -41,6 +42,35 @@ PARAMETER_PLACEHOLDERS = (
     "param_name_list",
     "param_count"
 )
+
+
+def include_directives(spec):
+    """
+    The headers one payload needs, as a list. One name is the common case, so
+    "include" accepts a bare string as well as a list.
+    """
+
+    included = spec.get("include") or []
+
+    if isinstance(included, str):
+        return [included]
+
+    return list(included)
+
+
+def include_text(header):
+    """
+    The header as it is written after #include. Angle brackets and quotes are
+    passed through, so a payload can ask for <vector>; anything else is a
+    project header and gets quoted.
+    """
+
+    header = header.strip()
+
+    if header.startswith("<") or header.startswith("\""):
+        return header
+
+    return f"\"{header}\""
 
 
 def resolve_payloads(config):
@@ -89,6 +119,22 @@ def resolve_payloads(config):
                 f"payload {name!r}: \"requires_parameters\" must be true or "
                 "false."
             )
+
+        included = spec.get("include", "")
+
+        if not isinstance(included, (str, list)):
+            raise ValueError(
+                f"payload {name!r}: \"include\" must be a header name or a "
+                "list of them."
+            )
+
+        for header in include_directives(spec):
+
+            if not isinstance(header, str) or not header.strip():
+                raise ValueError(
+                    f"payload {name!r}: every entry in \"include\" must be a "
+                    f"non-empty header name, got {header!r}."
+                )
 
         table[name] = spec
 
@@ -234,6 +280,15 @@ def skip_reason(spec, node):
             return reason, True
 
     return None, False
+
+
+def render_include(name, header):
+    """
+    The #include line for one header, marked like any other injected line so
+    removal finds it the same way.
+    """
+
+    return f"#include {include_text(header)}  {MARKER_PREFIX}{name}\n"
 
 
 def render(name, spec, context):

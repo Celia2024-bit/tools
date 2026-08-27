@@ -3,9 +3,11 @@ from .line_utils import (
     find_legacy_trace_line,
     find_open_brace_line,
     injected_span,
+    is_include,
     legacy_block_end,
     marker_of,
     markers_in_span,
+    orphaned_include_lines,
     payload_span
 )
 from .targets import (
@@ -92,6 +94,35 @@ def _write_back(
 def _wanted(payload_names, name):
 
     return payload_names is None or name in payload_names
+
+
+def _drop_orphaned_includes(
+    lines,
+    logger,
+    stats
+):
+    """
+    Delete the includes nothing in the file needs any more. Returns whether
+    anything went.
+
+    Runs after the payload lines are already out, since that is what decides
+    which includes are still earning their place. An include the author wrote
+    themselves carries no marker and is never touched.
+    """
+
+    orphans = orphaned_include_lines(lines)
+
+    for i in reversed(orphans):
+
+        logger.log(
+            f"   ➖ Include: {lines[i].strip()}"
+        )
+
+        del lines[i]
+
+        stats["includes_removed"] += 1
+
+    return bool(orphans)
 
 
 def _spans_to_delete(
@@ -244,6 +275,12 @@ def _remove_targeted(
     ):
         del lines[begin:end]
 
+    _drop_orphaned_includes(
+        lines,
+        logger,
+        stats
+    )
+
     #
     # One line per function, not per payload: the counter has always meant
     # "functions whose trace came out", and a function with three payloads
@@ -288,7 +325,18 @@ def _remove_all(
             lines[i]
         )
 
-        if name and _wanted(payload_names, name):
+        #
+        # A marked #include is ours too, but it is not a trace: whether it
+        # goes depends on what is left after the payload lines are out, so it
+        # is left to _drop_orphaned_includes below.
+        #
+        if (
+            name
+            and
+            not is_include(lines[i])
+            and
+            _wanted(payload_names, name)
+        ):
 
             #
             # One log line per payload, not per source line: a payload may
@@ -366,6 +414,13 @@ def _remove_all(
         )
 
         i += 1
+
+    if _drop_orphaned_includes(
+        result,
+        logger,
+        stats
+    ):
+        modified = True
 
     if not modified:
 

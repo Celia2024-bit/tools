@@ -2,6 +2,8 @@ from .constants import SCOPE_TRACE
 from .line_utils import (
     find_legacy_trace_line,
     find_open_brace_line,
+    has_include,
+    include_insert_point,
     injected_span,
     marker_of,
     markers_in_span
@@ -9,7 +11,10 @@ from .line_utils import (
 from .payloads import (
     BUILT_IN_PAYLOADS,
     build_context,
+    include_directives,
+    include_text,
     render,
+    render_include,
     skip_reason
 )
 from .targets import (
@@ -57,6 +62,12 @@ def inject_trace_into_file(
     ).splitlines(True)
 
     rewrites = []
+
+    #
+    # Headers wanted by the payloads that actually went in, gathered across
+    # every function in the file: one include serves the lot.
+    #
+    headers = []
 
     for node, label in iter_target_functions(
         tu,
@@ -109,6 +120,11 @@ def inject_trace_into_file(
                 continue
 
             wanted.append(name)
+
+            for header in include_directives(payload_table[name]):
+
+                if (name, header) not in headers:
+                    headers.append((name, header))
 
         begin, end = injected_span(
             lines,
@@ -201,7 +217,21 @@ def inject_trace_into_file(
             )
         )
 
-    if not rewrites:
+    #
+    # Presence is decided here, before the bodies move, because no body
+    # rewrite can add or remove an #include. Where the line goes has to wait
+    # until afterwards, when the indices have settled.
+    #
+    missing = [
+        render_include(name, header)
+        for name, header in headers
+        if not has_include(
+            lines,
+            f"#include {include_text(header)}"
+        )
+    ]
+
+    if not rewrites and not missing:
 
         logger.log(
             "   ✅ No changes required."
@@ -235,6 +265,20 @@ def inject_trace_into_file(
             )
 
             stats["trace_updated"] += 1
+
+    if missing:
+
+        at = include_insert_point(lines)
+
+        lines[at:at] = missing
+
+        for line in missing:
+
+            logger.log(
+                f"   ➕ Include: {line.strip()}"
+            )
+
+            stats["includes_added"] += 1
 
     cpp_file.write_text(
         "".join(lines),

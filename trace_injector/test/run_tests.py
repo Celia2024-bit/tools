@@ -326,6 +326,53 @@ void Legacy::New()
 # the parameter placeholders: a check that has to be handed the values cannot
 # be written once and reused, it has to be generated per function.
 #
+#
+# A payload declaring no header at all, so the line it writes does not compile:
+# `Probe` is undeclared. That is an error and nothing worse, which makes this
+# the one fixture left carrying a non-fatal diagnostic now that the built-in
+# payload brings its own header.
+#
+NO_INCLUDE_PAYLOAD = {
+    "probe_only": {
+        "lines": [
+            "{indent}Probe(\"{qualified_name}\");"
+        ]
+    }
+}
+
+INJECT_PROBE_ONLY = {
+    "directory": "test/src",
+    "base_class": "IStrategy",
+    "function": "Run",
+    "payloads": [
+        "probe_only"
+    ]
+}
+
+#
+# A payload asking for a header that is nowhere on the include path. Unlike an
+# undeclared name, clang treats that as fatal — which is why the include a
+# payload declares has to be spelled the way the project's own sources would
+# spell it.
+#
+UNRESOLVABLE_INCLUDE = {
+    "probe_missing": {
+        "lines": [
+            "{indent}Probe(\"{qualified_name}\");"
+        ],
+        "include": "NoSuchHeaderAnywhere.h"
+    }
+}
+
+INJECT_UNRESOLVABLE = {
+    "directory": "test/src",
+    "base_class": "IStrategy",
+    "function": "Run",
+    "payloads": [
+        "probe_missing"
+    ]
+}
+
 PARAM_CHECK = {
     "check": {
         "lines": [
@@ -909,6 +956,100 @@ SCENARIOS = [
             "check_count"
         ]
     },
+    #
+    # Includes. The header the payload needs is added on inject and taken back
+    # out once nothing in the file needs it, which is what lets a file the
+    # tool has touched still parse on the next run.
+    #
+    {
+        "name": "includes: the built-in header is added once per file",
+        "rule": INJECT_ALL_SRC,
+        "injected": ALL_SRC_FUNCTIONS,
+        "must_contain": [
+            "#include \"NetworkMgr.h\"\n"
+            "#include \"ScopeTrace.h\"  // @tj:scope_trace\n"
+        ],
+        "logs": [
+            "➕ Include: #include \"ScopeTrace.h\"  // @tj:scope_trace"
+        ]
+    },
+    {
+        "name": "includes: a rerun does not add a second copy",
+        "setup": INJECT_ALL_SRC,
+        "rule": INJECT_ALL_SRC,
+        "injected": set(),
+        "updated": set(),
+        "logs_absent": [
+            "➕ Include:"
+        ]
+    },
+    {
+        "name": "includes: removed once the last payload in the file is gone",
+        "setup": INJECT_ALL_SRC,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/src",
+            "function": ""
+        },
+        "removed": set(),
+        "removed_count": len(ALL_SRC_FUNCTIONS),
+        "remaining": 0,
+        "must_not_contain": [
+            "ScopeTrace.h"
+        ],
+        "logs": [
+            "➖ Include: #include \"ScopeTrace.h\"  // @tj:scope_trace"
+        ]
+    },
+    {
+        "name": "includes: kept while another function in the file still needs it",
+        "setup": INJECT_ALL_SRC,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/src",
+            "function": "Run"
+        },
+        "removed": ALL_RUNS,
+        "must_contain": [
+            "#include \"ScopeTrace.h\"  // @tj:scope_trace\n"
+        ]
+    },
+    {
+        "name": "includes: a payload declaring none leaves code that will not compile",
+        "payloads": NO_INCLUDE_PAYLOAD,
+        "setup": INJECT_PROBE_ONLY,
+        "mode": "remove",
+        "rule": INJECT_PROBE_ONLY,
+        "removed": {
+            "StrategyEngine::Run",
+            "AlphaStrategy::Run"
+        },
+        #
+        # An undeclared name is an error and no more, so base-class matching is
+        # unaffected and there is nothing to warn about.
+        #
+        "warns": False
+    },
+    {
+        "name": "includes: an unresolvable header round-trips, warning on the way",
+        "payloads": UNRESOLVABLE_INCLUDE,
+        "setup": INJECT_UNRESOLVABLE,
+        "mode": "remove",
+        "rule": INJECT_UNRESOLVABLE,
+        "removed": {
+            "StrategyEngine::Run",
+            "AlphaStrategy::Run"
+        },
+        "must_not_contain": [
+            "NoSuchHeaderAnywhere.h"
+        ],
+        #
+        # A header clang cannot find is fatal, so the next run's base-class
+        # matching is no longer trustworthy — the reason to spell the include
+        # the way the project's own sources spell it.
+        #
+        "warns": True
+    },
     {
         "name": "examples: the parameter check example names what it can",
         "config": "config_param_check_example.json",
@@ -918,7 +1059,8 @@ SCENARIOS = [
         "must_contain": [
             "    ParameterCheck::check_all(\"Params::Three\", "
             "{\"count\", \"price\", \"symbol\"}, count, price, symbol);"
-            "  // @tj:check_parameters\n"
+            "  // @tj:check_parameters\n",
+            "#include \"ParameterCheck.h\"  // @tj:check_parameters\n"
         ]
     },
     {
@@ -959,7 +1101,9 @@ def fresh_stats():
         "files_excluded": 0,
         "trace_injected": 0,
         "trace_updated": 0,
-        "trace_removed": 0
+        "trace_removed": 0,
+        "includes_added": 0,
+        "includes_removed": 0
     }
 
 
@@ -1096,6 +1240,51 @@ BAD_CONFIGS = [
                 "p // @tj:q": {
                     "lines": [
                         "x"
+                    ]
+                }
+            }
+        }
+    ),
+    (
+        "requires_parameters is not a bool",
+        {
+            "inject": [],
+            "payloads": {
+                "p": {
+                    "lines": [
+                        "x"
+                    ],
+                    "requires_parameters": "yes"
+                }
+            }
+        }
+    ),
+    (
+        "include is neither a header nor a list of them",
+        {
+            "inject": [],
+            "payloads": {
+                "p": {
+                    "lines": [
+                        "x"
+                    ],
+                    "include": 42
+                }
+            }
+        }
+    ),
+    (
+        "include lists an empty header name",
+        {
+            "inject": [],
+            "payloads": {
+                "p": {
+                    "lines": [
+                        "x"
+                    ],
+                    "include": [
+                        "a.h",
+                        "  "
                     ]
                 }
             }
@@ -1545,6 +1734,26 @@ def patch_span_blind():
     )
 
 
+def patch_include_never_orphaned():
+    """Keep every injected #include, whether anything still needs it or not."""
+
+    return patch_function(
+        "orphaned_include_lines",
+        lambda lines: [],
+        ["line_utils", "remover"]
+    )
+
+
+def patch_include_blind():
+    """Stop noticing an #include that is already in the file."""
+
+    return patch_function(
+        "has_include",
+        lambda lines, directive: False,
+        ["line_utils", "injector"]
+    )
+
+
 def patch_never_skip():
     """Render every payload into every function, parameters or not."""
 
@@ -1586,12 +1795,18 @@ SELF_CHECKS = [
         "name": "parse warning widened past fatal",
         "patch": patch_warning_threshold,
         "must_fail": [
-            "remove: by base_class, LocalCache::Execute survives",
-            "examples: base_class inject then remove leaves nothing"
+            "includes: a payload declaring none leaves code that will not compile"
         ],
         "must_pass": [
             "separate include root, include_dirs given",
-            "separate include root, include_dirs MISSING -> warn, no writes"
+            "separate include root, include_dirs MISSING -> warn, no writes",
+            #
+            # Injecting the #include is what makes an already-injected file
+            # parse cleanly on the second pass, so there is nothing left here
+            # for a widened threshold to find.
+            #
+            "remove: by base_class, LocalCache::Execute survives",
+            "examples: base_class inject then remove leaves nothing"
         ]
     },
     {
@@ -1673,6 +1888,37 @@ SELF_CHECKS = [
             #
             "same tree, relative includes, no include_dirs",
             "remove: pre-marker trace, targeted by function name"
+        ]
+    },
+    {
+        "name": "injected includes never taken back out",
+        "patch": patch_include_never_orphaned,
+        "must_fail": [
+            "includes: removed once the last payload in the file is gone",
+            "includes: an unresolvable header round-trips, warning on the way"
+        ],
+        "must_pass": [
+            #
+            # This one keeps its include either way, so there is nothing here
+            # for the missing cleanup to get wrong.
+            #
+            "includes: kept while another function in the file still needs it",
+            "remove: by function name only"
+        ]
+    },
+    {
+        "name": "blind to an include already there",
+        "patch": patch_include_blind,
+        "must_fail": [
+            "includes: a rerun does not add a second copy"
+        ],
+        "must_pass": [
+            #
+            # Nothing is there to be noticed on a clean file, so the first
+            # inject is unaffected.
+            #
+            "includes: the built-in header is added once per file",
+            "same tree, relative includes, no include_dirs"
         ]
     },
     {

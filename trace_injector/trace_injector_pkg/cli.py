@@ -51,7 +51,9 @@ def main():
         "files_excluded": 0,
         "trace_injected": 0,
         "trace_updated": 0,
-        "trace_removed": 0
+        "trace_removed": 0,
+        "includes_added": 0,
+        "includes_removed": 0
     }
 
     logger.log(
@@ -117,6 +119,14 @@ def main():
 
     logger.log(
         f"Trace Removed  : {stats['trace_removed']}"
+    )
+
+    logger.log(
+        f"Includes Added : {stats['includes_added']}"
+    )
+
+    logger.log(
+        f"Includes Gone  : {stats['includes_removed']}"
     )
 
     logger.log()

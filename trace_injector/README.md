@@ -20,9 +20,13 @@ share a method name stay distinguishable:
 
 ## What gets injected
 
-By default one line at the top of the body, ending in a marker:
+By default one line at the top of the body plus the header it needs, both
+ending in a marker:
 
 ```cpp
+#include "AlphaStrategy.h"
+#include "ScopeTrace.h"  // @tj:scope_trace
+
 void AlphaStrategy::Run()
 {
     ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);  // @tj:scope_trace
@@ -178,6 +182,35 @@ and `{param_count}` renders `0` and `{param_name_list}` renders `{}`. Both
 warnings apply either way — they are triggered by the placeholders, not by the
 flag. See `config_param_check_example.json`.
 
+**Headers.** A payload says what it needs to compile, and the tool keeps that
+`#include` in step with its lines:
+
+```json
+"payloads": {
+    "check_parameters": {
+        "lines": [ "{indent}ParameterCheck::check_all(\"{qualified_name}\", {param_name_list}, {param_names});" ],
+        "include": "trading/ParameterCheck.h",
+        "requires_parameters": true
+    }
+}
+```
+
+`include` takes one header or a list. `<vector>` and `"a/b.h"` are passed
+through as written; anything else is quoted for you. The line joins the file's
+existing include block:
+
+- added once per file, on the first `inject` that writes the payload into it —
+  never twice, and never when the file already includes that header itself
+- removed once nothing in the file needs it any more, so a `remove` that clears
+  the last payload takes the header with it, and one that leaves a payload
+  behind in another function does not
+- an include *you* wrote carries no marker and is never touched
+
+Spell it the way the project's own sources would. A header clang cannot find
+is a fatal parse error, and while `inject` and an unfiltered `remove` do not
+care, `base_class` matching on the next run does — it will warn that it may
+have missed overrides.
+
 **Editing a template.** Change one and rerun `inject`: the region at the top
 of each matching body is rebuilt from the templates, so the lines come out
 right without a `remove` pass first. The log distinguishes the two:
@@ -276,11 +309,10 @@ as "results are probably incomplete", not as noise.
 
 Only **fatal** diagnostics are echoed, which in practice means an `#include`
 clang could not resolve — precisely the failure that silently empties a
-`base_class` match. Ordinary semantic errors are not reported: the hierarchy
-still resolves through them, and one of them is guaranteed. Injected files
-do not `#include "ScopeTrace.h"` (the tool never adds it), so every rerun
-over an already-injected tree yields `unknown type name 'ScopeTrace'`.
-Echoing that would train you to ignore the warning that matters.
+`base_class` match. Ordinary semantic errors are not: the hierarchy resolves
+through them, and a payload whose header you have not declared produces one
+per injected line. Echoing those would train you to ignore the warning that
+matters.
 
 ## Known limitations
 
@@ -291,9 +323,10 @@ Echoing that would train you to ignore the warning that matters.
   recognised during parsing and deliberately skipped — placing them by their
   header line number into the `.cpp` would land the trace in an unrelated
   function.
-- **The `ScopeTrace` include is not added.** Injected files reference
-  `ScopeTrace` without including its header, so they will not compile until
-  you add it (a project-wide precompiled header is the usual answer).
+- **A payload's header has to be spelled by hand.** The tool adds and removes
+  the `#include` a payload declares, but it cannot work out the path for you.
+  Get it wrong and the file no longer parses, which costs you `base_class`
+  matching on the next run (with a warning).
 
 ## Examples
 
@@ -326,12 +359,14 @@ their absence — `NetworkMgr::Run` (same method name, unrelated class) and
 `LocalCache::Execute` (same method name, no base class). Three of them run the
 shipped example configs for real rather than a copy of their rules.
 
-**2. Self checks.** Breaks the tool on purpose ten ways — degrade targeted
+**2. Self checks.** Breaks the tool on purpose twelve ways — degrade targeted
 remove to the whole-file scan, stop restricting definitions to the main file,
 widen the parse warning past fatal, drop the pre-marker fallback, go blind to
 markers, ignore a rule's payload list, leave placeholders unsubstituted, stop
-seeing the region already in a body, let parameter payloads into functions
-whose parameters cannot be named, typo a `base_class` in an example config — and confirms the right scenarios go red
+seeing the region already in a body, keep every injected `#include` forever,
+go blind to an `#include` already present, let parameter payloads into
+functions whose parameters cannot be named, typo a `base_class` in an example
+config — and confirms the right scenarios go red
 and the others stay green. A green suite only means something if it can go
 red; this is what stops an assertion from quietly becoming vacuous. Skipped
 when part 1 is already failing, since it asserts *which* scenarios fail.
@@ -395,8 +430,19 @@ has to cope with — several named parameters, one unnamed, none, variadic):
   the payload and not about the function
 - a parameter payload comes back out by its marker like any other
 
+Include scenarios:
+
+- the built-in header is added once per file, right after the file's own
+  include, and a rerun does not add a second copy
+- it comes out again once the last payload in the file is gone, and stays while
+  another function still holds one
+- a payload declaring no header leaves code that will not compile, which is an
+  error and not a warning — base-class matching is unaffected
+- a payload naming a header clang cannot find still round-trips, but warns on
+  the way, since that error *is* fatal
+
 Plus two config guards: every shipped `config_*example*.json` still passes
-validation, and five malformed `payloads` configs are still rejected. Both
+validation, and eight malformed `payloads` configs are still rejected. Both
 failures are silent ones — an undefined payload injects nothing and reports
 "no changes required".
 

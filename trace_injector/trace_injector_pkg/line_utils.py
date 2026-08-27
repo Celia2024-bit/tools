@@ -19,6 +19,107 @@ def marker_of(line):
     return line[at + len(MARKER_PREFIX):].strip() or None
 
 
+def is_include(line):
+    return line.lstrip().startswith("#include")
+
+
+def has_include(lines, directive):
+    """
+    Whether this exact `#include ...` is already in the file, whoever put it
+    there. `directive` carries its own closing quote or bracket, so it cannot
+    match "Trace.h" against "Trace.hpp".
+    """
+
+    return any(
+        line.strip().startswith(directive)
+        for line in lines
+    )
+
+
+def include_insert_point(lines):
+    """
+    Where a new #include goes: right after the last one already there, so it
+    joins the block instead of jumping the file's own header.
+
+    With no includes at all, after whatever the file opens with — a comment
+    block, a #pragma — and before the first line of code. No blank line is
+    added either way: the include sits flush against its neighbours, which is
+    what lets removal put the file back byte for byte.
+    """
+
+    last = None
+
+    for i, line in enumerate(lines):
+
+        if is_include(line):
+            last = i
+
+    if last is not None:
+        return last + 1
+
+    i = 0
+    in_comment = False
+
+    while i < len(lines):
+
+        text = lines[i].strip()
+
+        if in_comment:
+
+            if "*/" in text:
+                in_comment = False
+
+            i += 1
+            continue
+
+        if text.startswith("/*"):
+            in_comment = "*/" not in text
+            i += 1
+            continue
+
+        if (
+            text == ""
+            or
+            text.startswith("//")
+            or
+            text.startswith("#pragma")
+        ):
+            i += 1
+            continue
+
+        break
+
+    return i
+
+
+def orphaned_include_lines(lines):
+    """
+    The marked #include lines whose payload has nothing left in this file.
+
+    An include is only worth keeping while something needs it, and after a
+    removal pass nothing might. Counted across the whole file rather than per
+    function, since one include serves every payload line in it. A marked
+    include is itself a marker, so it does not count as its own reason to stay.
+    """
+
+    body_markers = set()
+
+    for line in lines:
+
+        name = marker_of(line)
+
+        if name and not is_include(line):
+            body_markers.add(name)
+
+    return [
+        i
+        for i, line in enumerate(lines)
+        if is_include(line)
+        and marker_of(line)
+        and marker_of(line) not in body_markers
+    ]
+
+
 def injected_span(
     lines,
     brace_idx
