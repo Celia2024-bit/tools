@@ -1,16 +1,135 @@
+from .constants import LEGACY_TRACE_PATTERN, MARKER_PREFIX
+
 #
-# How far past a function's opening brace a trace is allowed to sit. The
-# injector always writes it on the very next line; the slack absorbs hand
-# edits and reformatting.
+# How far past a function's opening brace a legacy (unmarked) trace is allowed
+# to sit. Marked payloads need no such window — the marker itself says which
+# lines are ours, so injected_span reads the run instead of guessing at it.
 #
 TRACE_SEARCH_WINDOW = 8
 
 
-def find_trace_line(
+def marker_of(line):
+    """The payload name this line was injected for, or None if it is not ours."""
+
+    at = line.find(MARKER_PREFIX)
+
+    if at == -1:
+        return None
+
+    return line[at + len(MARKER_PREFIX):].strip() or None
+
+
+def injected_span(
     lines,
     brace_idx
 ):
-    """Index of the trace at the top of this function body, or None."""
+    """
+    Half-open span of the injected region at the top of a function body: the
+    run of marked lines following the opening brace, blank lines between them
+    included, plus the single blank line the injector leaves after the last
+    one.
+
+    Returns an empty span when nothing of ours is there. The span starts at
+    the first marked line, not at the brace, so a blank line the author put
+    before the payloads is left alone.
+    """
+
+    first = None
+    last = None
+
+    i = brace_idx + 1
+
+    while i < len(lines):
+
+        if marker_of(lines[i]):
+
+            if first is None:
+                first = i
+
+            last = i
+
+        elif lines[i].strip() != "":
+            break
+
+        i += 1
+
+    if first is None:
+        return brace_idx + 1, brace_idx + 1
+
+    end = last + 1
+
+    if (
+        end < len(lines)
+        and
+        lines[end].strip() == ""
+    ):
+        end += 1
+
+    return first, end
+
+
+def payload_span(
+    lines,
+    brace_idx,
+    marker
+):
+    """
+    Half-open span of the lines one payload contributed to this body, or None
+    if that payload is not present.
+
+    The trailing blank separator is swallowed only when this payload is the
+    last one in the region — otherwise the blank belongs to whatever follows.
+    """
+
+    begin, end = injected_span(
+        lines,
+        brace_idx
+    )
+
+    mine = [
+        i
+        for i in range(begin, end)
+        if marker_of(lines[i]) == marker
+    ]
+
+    if not mine:
+        return None
+
+    stop = mine[-1] + 1
+
+    if all(
+        lines[i].strip() == ""
+        for i in range(stop, end)
+    ):
+        stop = end
+
+    return mine[0], stop
+
+
+def already_injected(
+    lines,
+    brace_idx,
+    marker
+):
+
+    return payload_span(
+        lines,
+        brace_idx,
+        marker
+    ) is not None
+
+
+def find_legacy_trace_line(
+    lines,
+    brace_idx
+):
+    """
+    Index of an unmarked trace at the top of this function body, or None.
+
+    Only for traces written before markers existed. A marked line matches
+    LEGACY_TRACE_PATTERN too, so it is skipped here explicitly rather than
+    counted twice.
+    """
 
     begin = brace_idx + 1
 
@@ -21,30 +140,22 @@ def find_trace_line(
 
     for i in range(begin, end):
 
-        if "ScopeTrace trace" in lines[i]:
+        if marker_of(lines[i]):
+            continue
+
+        if LEGACY_TRACE_PATTERN in lines[i]:
             return i
 
     return None
 
 
-def already_injected(
-    lines,
-    brace_idx
-):
-
-    return find_trace_line(
-        lines,
-        brace_idx
-    ) is not None
-
-
-def trace_block_end(
+def legacy_block_end(
     lines,
     trace_idx
 ):
     """
-    Index one past the last line of the trace block that starts at
-    `trace_idx`, swallowing the blank line the injector leaves behind.
+    Index one past the last line of the legacy trace block that starts at
+    `trace_idx`, swallowing the blank line the old injector left behind.
     """
 
     i = trace_idx + 1

@@ -1,7 +1,10 @@
+from .constants import LEGACY_TRACE_PATTERN, SCOPE_TRACE
 from .line_utils import (
+    find_legacy_trace_line,
     find_open_brace_line,
-    find_trace_line,
-    trace_block_end
+    legacy_block_end,
+    marker_of,
+    payload_span
 )
 from .targets import (
     iter_target_functions,
@@ -78,6 +81,41 @@ def _write_back(
     stats["files_modified"] += 1
 
 
+def _span_to_delete(
+    lines,
+    brace_idx
+):
+    """
+    Half-open span of the trace at the top of this body, or None.
+
+    Marker first, then the pre-marker layout. Trying the marker first matters:
+    a marked line contains the legacy pattern too, so the order decides
+    whether the blank separator goes with it.
+    """
+
+    span = payload_span(
+        lines,
+        brace_idx,
+        SCOPE_TRACE
+    )
+
+    if span is not None:
+        return span
+
+    trace_idx = find_legacy_trace_line(
+        lines,
+        brace_idx
+    )
+
+    if trace_idx is None:
+        return None
+
+    return trace_idx, legacy_block_end(
+        lines,
+        trace_idx
+    )
+
+
 def _remove_targeted(
     cpp_file,
     logger,
@@ -123,21 +161,20 @@ def _remove_targeted(
         if brace_idx is None:
             continue
 
-        trace_idx = find_trace_line(
+        span = _span_to_delete(
             lines,
             brace_idx
         )
 
-        if trace_idx is None:
+        if span is None:
             continue
+
+        begin, end = span
 
         deletions.append(
             (
-                trace_idx,
-                trace_block_end(
-                    lines,
-                    trace_idx
-                ),
+                begin,
+                end,
                 label
             )
         )
@@ -193,17 +230,55 @@ def _remove_all(
 
     while i < len(lines):
 
-        if "ScopeTrace trace(" in lines[i]:
+        name = marker_of(
+            lines[i]
+        )
+
+        if name:
+
+            #
+            # One log line per payload, not per source line: a payload may
+            # span several, each carrying the same marker.
+            #
+            end = i + 1
+
+            while (
+                end < len(lines)
+                and
+                marker_of(lines[end]) == name
+            ):
+                end += 1
+
+            if (
+                end < len(lines)
+                and
+                lines[end].strip() == ""
+            ):
+                end += 1
 
             logger.log(
-                "   ✨ Removed ScopeTrace"
+                f"   ✨ Removed {name}"
             )
 
             stats["trace_removed"] += 1
 
             modified = True
 
-            i = trace_block_end(
+            i = end
+
+            continue
+
+        if LEGACY_TRACE_PATTERN in lines[i]:
+
+            logger.log(
+                "   ✨ Removed ScopeTrace (unmarked)"
+            )
+
+            stats["trace_removed"] += 1
+
+            modified = True
+
+            i = legacy_block_end(
                 lines,
                 i
             )

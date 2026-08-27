@@ -18,6 +18,28 @@ share a method name stay distinguishable:
 ✨ Injected: Normalize()            free function at file scope
 ```
 
+## What gets injected
+
+One line at the top of the body, ending in a marker:
+
+```cpp
+void AlphaStrategy::Run()
+{
+    ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);  // @tj:scope_trace
+
+    ...
+}
+```
+
+The marker is what `remove` looks for. It names the payload that produced the
+line, so removal never has to recognise the payload's own text — leave the
+marker alone and an injected line stays removable however it is later worded.
+
+Traces written by earlier versions of the tool carry no marker (they were a
+five-line block). `remove` still recognises that shape, and `inject` still
+counts it as present rather than stacking a second trace on top, so there is
+nothing to migrate.
+
 ## Config
 
 Top level holds exactly one of `inject` or `remove` (never both), plus the
@@ -76,15 +98,15 @@ directory/file/function level.
 `remove` mirrors `inject`, with one deliberate asymmetry:
 
 - **Any filter present** (`function`, `base_class`, or a matching `exclude`)
-  → the file is parsed and only the traces sitting at the top of the
-  selected functions are deleted. Same selection pass as `inject`, so the
-  same rule takes back out exactly what it put in, and the log names each
-  function it removed from.
+  → the file is parsed and only the marked lines at the top of the selected
+  functions are deleted. Same selection pass as `inject`, so the same rule
+  takes back out exactly what it put in, and the log names each function it
+  removed from.
 - **No filter at all** → no parsing, just a line scan that strips *every*
-  `ScopeTrace` in the matched files. Slightly blunter, but it also catches
-  traces the injector never placed (hand-written, or left over from a rule
-  you have since edited). The log cannot name the function in this case,
-  since there is no AST to ask.
+  marked line in the matched files, wherever it sits. Slightly blunter, but
+  it also catches traces the current rules no longer select — left over from
+  a rule you have since edited. The log cannot name the function in this
+  case, since there is no AST to ask.
 
 ### `directory` vs `include_dirs`
 
@@ -193,9 +215,11 @@ their absence — `NetworkMgr::Run` (same method name, unrelated class) and
 `LocalCache::Execute` (same method name, no base class). Two of them run the
 shipped example configs for real rather than a copy of their rules.
 
-**2. Self checks.** Breaks the tool on purpose three ways — degrade targeted
-remove to the whole-file scan, widen the parse warning past fatal, typo a
-`base_class` in an example config — and confirms the right scenarios go red
+**2. Self checks.** Breaks the tool on purpose six ways — degrade targeted
+remove to the whole-file scan, stop restricting definitions to the main file,
+widen the parse warning past fatal, drop the pre-marker fallback, go blind to
+markers, typo a `base_class` in an example config — and confirms the right
+scenarios go red
 and the others stay green. A green suite only means something if it can go
 red; this is what stops an assertion from quietly becoming vacuous. Skipped
 when part 1 is already failing, since it asserts *which* scenarios fail.
@@ -225,6 +249,14 @@ traces are left behind):
 - the two `base_class` example configs round-trip to zero traces
 - a header-inline definition is not placed by its header line number into
   the `.cpp` (`test/inline_hdr`, built so going wrong is visible)
+
+Marker scenarios (`test/legacy`, whose starting content each scenario writes
+for itself since no rule can produce it):
+
+- a pre-marker five-line trace is still removed, targeted and unfiltered
+- `inject` does not stack a second trace on a pre-marker one
+- a marked line whose payload text the tool knows nothing about is still
+  removed — the assertion that removal follows the marker, not the text
 
 Plus a guard that every shipped `config_*example*.json` still passes
 validation.

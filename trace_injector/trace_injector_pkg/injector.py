@@ -1,5 +1,9 @@
-from .constants import TRACE_LINES
-from .line_utils import already_injected, find_open_brace_line
+from .constants import SCOPE_TRACE, TRACE_LINES
+from .line_utils import (
+    already_injected,
+    find_legacy_trace_line,
+    find_open_brace_line
+)
 from .targets import (
     iter_target_functions,
     log_parse_problems,
@@ -55,10 +59,19 @@ def inject_trace_into_file(
         if brace_idx is None:
             continue
 
+        #
+        # The legacy check keeps a rerun over a tree injected by an older
+        # version from stacking a second trace on top of the first.
+        #
         if already_injected(
             lines,
+            brace_idx,
+            SCOPE_TRACE
+        ) or find_legacy_trace_line(
+            lines,
             brace_idx
-        ):
+        ) is not None:
+
             logger.log(
                 f"   ✅ Already injected: {label}()"
             )
