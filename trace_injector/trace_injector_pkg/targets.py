@@ -10,6 +10,7 @@ from clang import cindex
 
 from .class_hierarchy import is_or_derives_from, owning_class, qualified_name
 from .file_discovery import match_function
+from .line_utils import scan_for_body_brace
 
 MAX_REPORTED_DIAGNOSTICS = 3
 
@@ -20,7 +21,20 @@ MIN_REPORTED_SEVERITY = cindex.Diagnostic.Fatal
 
 FUNCTION_KINDS = (
     cindex.CursorKind.CXX_METHOD,
-    cindex.CursorKind.FUNCTION_DECL
+    cindex.CursorKind.FUNCTION_DECL,
+    cindex.CursorKind.CONSTRUCTOR,
+    cindex.CursorKind.DESTRUCTOR,
+    cindex.CursorKind.FUNCTION_TEMPLATE
+)
+
+#
+# libclang reports no definition and no body for a function template nothing
+# in the translation unit instantiates, so is_definition() cannot be the test
+# for this one kind. What follows the signature decides instead, which is also
+# what tells a declaration apart from a definition.
+#
+BODYLESS_KINDS = (
+    cindex.CursorKind.FUNCTION_TEMPLATE,
 )
 
 
@@ -61,9 +75,9 @@ def log_parse_problems(tu, logger):
 
     Fatal only, deliberately. A missing #include is fatal; ordinary semantic
     errors are not, and they do not stop the hierarchy from resolving. The
-    common one is "unknown type name 'ScopeTrace'" on a second run, because
-    the injector writes the trace without adding its header — reporting that
-    would train the reader to ignore the warning that matters.
+    common one is an undeclared name, from a payload that did not say which
+    header it needs — reporting that would train the reader to ignore the
+    warning that matters.
     """
 
     reported = 0
@@ -126,6 +140,44 @@ def in_main_file(node, tu):
     )
 
 
+def parameters_of(node):
+    """
+    This function's parameters, innermost cursors and all.
+
+    Reads the PARM_DECL children rather than get_arguments(), which comes back
+    empty for a function template — the parameters are there either way, and a
+    payload naming them must not quietly see none.
+    """
+
+    return [
+        child
+        for child in node.get_children()
+        if child.kind == cindex.CursorKind.PARM_DECL
+    ]
+
+
+def body_open_brace(node, lines):
+    """
+    Index of the line holding the { that opens this function's body, or None
+    when it has no body in this file.
+
+    The AST is asked first. A constructor's member-init list has braces of its
+    own and they come before the body's — `: m_limit{limit}` — so the first {
+    after the signature is not reliably the one wanted. Falling back to the
+    text is for templates, where libclang offers no body to ask about.
+    """
+
+    for child in node.get_children():
+
+        if child.kind == cindex.CursorKind.COMPOUND_STMT:
+            return child.extent.start.line - 1
+
+    return scan_for_body_brace(
+        lines,
+        node.extent.end.line
+    )
+
+
 def iter_target_functions(
     tu,
     target_function,
@@ -149,7 +201,11 @@ def iter_target_functions(
         if not in_main_file(node, tu):
             continue
 
-        if not node.is_definition():
+        #
+        # A bodyless kind gets no say here; body_open_brace decides for it,
+        # and the caller skips what has no body.
+        #
+        if node.kind not in BODYLESS_KINDS and not node.is_definition():
             continue
 
         if not match_function(

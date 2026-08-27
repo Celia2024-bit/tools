@@ -418,6 +418,36 @@ CHECK_INJECTED = (
     "    (void)count;\n"
 )
 
+INJECT_ALL_KINDS = {
+    "directory": "test/kinds",
+    "function": ""
+}
+
+#
+# Every definition under test/kinds a payload can go into. Twice is declared and
+# never defined, and the two Compact bodies are written on one line, so all
+# three are absent on purpose.
+#
+ALL_KINDS_FUNCTIONS = {
+    "Kinds::Kinds",
+    "Kinds::~Kinds",
+    "Kinds::Emit",
+    "UseEmit",
+    "Thrice"
+}
+
+#
+# The constructor, with the member-init list above the body. `m_limit{limit}`
+# has the earlier {, so a text scan for the first one puts the payload inside
+# the initialiser — which is why the body brace comes from the AST.
+#
+CTOR_INJECTED = (
+    "    , m_limit{limit}\n"
+    "{\n"
+    "    ScopeTrace trace(__FILE__, __LINE__, __FUNCTION__);"
+    "  // @tj:scope_trace\n"
+)
+
 ALIEN_MARKED_SOURCE = """#include "Legacy.h"
 
 void Legacy::Old()
@@ -1049,6 +1079,97 @@ SCENARIOS = [
         # the way the project's own sources spell it.
         #
         "warns": True
+    },
+    #
+    # Kinds of definition. A constructor, a destructor and a template are all
+    # functions with bodies, and each one breaks a different assumption: the
+    # constructor has braces before its body, the template has no body at all
+    # until something instantiates it.
+    #
+    {
+        "name": "kinds: constructor, destructor and template all take a payload",
+        "rule": INJECT_ALL_KINDS,
+        "injected": ALL_KINDS_FUNCTIONS,
+        "must_contain": [
+            CTOR_INJECTED
+        ]
+    },
+    {
+        "name": "kinds: the member-init list is not mistaken for the body",
+        "rule": INJECT_ALL_KINDS,
+        "injected": ALL_KINDS_FUNCTIONS,
+        #
+        # Nothing at all between the last initialiser and the brace. Scanning
+        # the text for the first { lands on `m_limit{limit}` and splits these
+        # two lines apart, which is what this asserts did not happen.
+        #
+        "must_contain": [
+            "    , m_limit{limit}\n{\n"
+        ]
+    },
+    {
+        "name": "kinds: a template nothing instantiates is still found",
+        "rule": {
+            "directory": "test/kinds",
+            "function": "Thrice"
+        },
+        "injected": {
+            "Thrice"
+        },
+        #
+        # Twice, declared and never defined, is the reason the text fallback
+        # stops at a ; — the two look alike until the line after the signature.
+        #
+        "must_contain": [
+            "T Twice(T x);\n\ntemplate <typename T>\nT Thrice(T x)\n"
+        ]
+    },
+    {
+        "name": "kinds: a body on one line is reported and left alone",
+        "rule": INJECT_ALL_KINDS,
+        "injected": ALL_KINDS_FUNCTIONS,
+        "must_contain": [
+            "Compact::Compact() { }\n",
+            "void Compact::Tick() { return; }\n"
+        ],
+        "logs": [
+            "Compact::Compact() skipped: body is on one line",
+            "Compact::Tick() skipped: body is on one line"
+        ]
+    },
+    {
+        "name": "kinds: every payload put in comes back out",
+        "setup": INJECT_ALL_KINDS,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/kinds",
+            "function": ""
+        },
+        "removed": set(),
+        "removed_count": len(ALL_KINDS_FUNCTIONS),
+        "remaining": 0,
+        "must_not_contain": [
+            "ScopeTrace.h"
+        ]
+    },
+    {
+        "name": "kinds: a destructor's payload comes out by name",
+        "setup": INJECT_ALL_KINDS,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/kinds",
+            "function": "~Kinds"
+        },
+        "removed": {
+            "Kinds::~Kinds"
+        },
+        #
+        # The other four are still there, so the include stays.
+        #
+        "remaining": len(ALL_KINDS_FUNCTIONS) - 1,
+        "must_contain": [
+            "#include \"ScopeTrace.h\"  // @tj:scope_trace\n"
+        ]
     },
     {
         "name": "examples: the parameter check example names what it can",
@@ -1764,6 +1885,35 @@ def patch_never_skip():
     )
 
 
+def patch_brace_from_text():
+    """
+    Find the body brace by scanning the text from the signature, the way this
+    worked before constructors were in scope. Every ordinary function is
+    unaffected; a member-init list is not.
+    """
+
+    from trace_injector_pkg.line_utils import scan_for_body_brace
+
+    return patch_function(
+        "body_open_brace",
+        lambda node, lines: scan_for_body_brace(
+            lines,
+            node.extent.start.line
+        ),
+        ["targets", "injector", "remover"]
+    )
+
+
+def patch_one_line_blind():
+    """Treat a body written on one line as if it had room for a payload."""
+
+    return patch_function(
+        "is_one_line_body",
+        lambda lines, brace_idx: False,
+        ["line_utils", "injector"]
+    )
+
+
 SELF_CHECKS = [
     {
         "name": "targeted remove degraded to whole-file",
@@ -1935,6 +2085,37 @@ SELF_CHECKS = [
             #
             "params: a payload naming no parameter goes in everywhere",
             "payloads: listed order, indent and every placeholder"
+        ]
+    },
+    {
+        "name": "body brace found by text instead of by AST",
+        "patch": patch_brace_from_text,
+        "must_fail": [
+            "kinds: the member-init list is not mistaken for the body",
+            "kinds: constructor, destructor and template all take a payload"
+        ],
+        "must_pass": [
+            #
+            # A function with no member-init list has its body brace as the
+            # first one after the signature either way.
+            #
+            "same tree, relative includes, no include_dirs",
+            "kinds: a template nothing instantiates is still found"
+        ]
+    },
+    {
+        "name": "one-line bodies treated as roomy",
+        "patch": patch_one_line_blind,
+        "must_fail": [
+            "kinds: a body on one line is reported and left alone"
+        ],
+        "must_pass": [
+            #
+            # Every other fixture writes its braces on their own lines, so
+            # there is nothing here for the missing guard to spoil.
+            #
+            "kinds: a template nothing instantiates is still found",
+            "params: a payload naming no parameter goes in everywhere"
         ]
     },
     {

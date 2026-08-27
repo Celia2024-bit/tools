@@ -1,7 +1,6 @@
 from .constants import LEGACY_TRACE_PATTERN, SCOPE_TRACE
 from .line_utils import (
     find_legacy_trace_line,
-    find_open_brace_line,
     injected_span,
     is_include,
     legacy_block_end,
@@ -11,6 +10,7 @@ from .line_utils import (
     payload_span
 )
 from .targets import (
+    body_open_brace,
     iter_target_functions,
     log_parse_problems,
     parse_translation_unit
@@ -237,10 +237,13 @@ def _remove_targeted(
         logger
     ):
 
-        brace_idx = find_open_brace_line(
-            lines,
-            node.extent.start.line,
-            node.extent.end.line
+        #
+        # A one-line body needs no guard here: nothing was ever put in one, so
+        # the span comes back empty and the function is passed over in silence.
+        #
+        brace_idx = body_open_brace(
+            node,
+            lines
         )
 
         if brace_idx is None:

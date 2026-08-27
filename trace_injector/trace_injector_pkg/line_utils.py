@@ -288,22 +288,48 @@ def legacy_block_end(
     return i
 
 
-def find_open_brace_line(
-    lines,
-    start_line,
-    end_line
-):
+def scan_for_body_brace(lines, from_line):
+    """
+    Index of the { that opens a body, starting from the signature's last line,
+    or None if a ; turns up first — which is how a declaration is told apart
+    from a definition when the AST will not say.
 
-    begin = start_line - 1
+    Only reached for function templates, whose bodies libclang does not expose
+    until something instantiates them.
+    """
 
-    end = min(
-        end_line,
-        len(lines)
-    )
+    i = from_line - 1
 
-    for i in range(begin, end):
+    while i < len(lines):
 
-        if "{" in lines[i]:
+        text = lines[i].split("//")[0]
+
+        brace = text.find("{")
+        semicolon = text.find(";")
+
+        if brace != -1 and (semicolon == -1 or brace < semicolon):
             return i
 
+        if semicolon != -1:
+            return None
+
+        i += 1
+
     return None
+
+
+def is_one_line_body(lines, brace_idx):
+    """
+    Whether the body opens and closes on the same line, as in `Foo::Foo() { }`.
+
+    Nothing can be inserted after that line without landing outside the body,
+    and nothing can be inserted inside it without rewriting the line, so those
+    are reported and left alone.
+    """
+
+    line = lines[brace_idx]
+
+    if "{" not in line:
+        return False
+
+    return "}" in line.split("{", 1)[1]

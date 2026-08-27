@@ -46,6 +46,42 @@ nothing to migrate.
 
 What actually goes on the line is configurable — see **Payloads** below.
 
+### What counts as a function
+
+Anything with a body in the `.cpp`: methods, free functions, constructors,
+destructors, and templates. Two shapes are passed over, each for its own
+reason:
+
+```cpp
+Kinds::Kinds(int count, int limit)
+    : m_count(count)
+    , m_limit{limit}                 // braces of its own, before the body's
+{
+    ScopeTrace trace(...);  // @tj:scope_trace
+    ...
+}
+
+template <typename T>
+T Thrice(T x)                        // no body in the AST until instantiated,
+{                                    // found by reading the text instead
+    ScopeTrace trace(...);  // @tj:scope_trace
+    return x + x + x;
+}
+
+template <typename T> T Twice(T x);  // declaration, left alone
+
+void Compact::Tick() { return; }     // one line, skipped with a warning
+```
+
+A body written on one line has nowhere to put a payload — inserting after it
+lands outside the braces, and rewriting the line is a reformat, not an
+injection. The function matched the rule, so the skip is logged rather than
+silent:
+
+```
+   ⚠️  Compact::Tick() skipped: body is on one line
+```
+
 ## Config
 
 Top level holds exactly one of `inject` or `remove` (never both), plus the
@@ -323,6 +359,9 @@ matters.
   recognised during parsing and deliberately skipped — placing them by their
   header line number into the `.cpp` would land the trace in an unrelated
   function.
+- **A body on one line is skipped.** `void Tick() { return; }` gets a warning
+  and nothing else — see **What counts as a function**. Give it braces on their
+  own lines and a rerun picks it up.
 - **A payload's header has to be spelled by hand.** The tool adds and removes
   the `#include` a payload declares, but it cannot work out the path for you.
   Get it wrong and the file no longer parses, which costs you `base_class`
@@ -359,14 +398,15 @@ their absence — `NetworkMgr::Run` (same method name, unrelated class) and
 `LocalCache::Execute` (same method name, no base class). Three of them run the
 shipped example configs for real rather than a copy of their rules.
 
-**2. Self checks.** Breaks the tool on purpose twelve ways — degrade targeted
+**2. Self checks.** Breaks the tool on purpose fourteen ways — degrade targeted
 remove to the whole-file scan, stop restricting definitions to the main file,
 widen the parse warning past fatal, drop the pre-marker fallback, go blind to
 markers, ignore a rule's payload list, leave placeholders unsubstituted, stop
 seeing the region already in a body, keep every injected `#include` forever,
 go blind to an `#include` already present, let parameter payloads into
-functions whose parameters cannot be named, typo a `base_class` in an example
-config — and confirms the right scenarios go red
+functions whose parameters cannot be named, find the body brace by scanning
+text instead of asking the AST, treat a one-line body as having room, typo a
+`base_class` in an example config — and confirms the right scenarios go red
 and the others stay green. A green suite only means something if it can go
 red; this is what stops an assertion from quietly becoming vacuous. Skipped
 when part 1 is already failing, since it asserts *which* scenarios fail.
@@ -440,6 +480,18 @@ Include scenarios:
   error and not a warning — base-class matching is unaffected
 - a payload naming a header clang cannot find still round-trips, but warns on
   the way, since that error *is* fatal
+
+Definition-kind scenarios (`test/kinds`, one member per shape a body can take):
+
+- a constructor, a destructor and a member template all receive a payload, and
+  a template nothing instantiates does too
+- the constructor's payload goes below the member-init list, not inside it —
+  asserted on the exact bytes, since `m_limit{limit}` has the earlier `{`
+- a template that is only declared is left alone, which is what the text scan
+  stopping at a `;` buys
+- both one-line bodies are reported and left byte-identical
+- everything injected comes back out, include and all, and a rule naming the
+  destructor takes only that one
 
 Plus two config guards: every shipped `config_*example*.json` still passes
 validation, and eight malformed `payloads` configs are still rejected. Both

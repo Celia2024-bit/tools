@@ -43,7 +43,7 @@ Two gaps found while probing:
   gets its payload inserted at the *header's* line number inside the `.cpp`.
   Reproduced: `Widget::Run` defined on line 5 of `Widget.h` landed inside
   `Widget::Later`'s `if` block, labelled `Widget::Run`. It usually misses
-  only because `find_open_brace_line` finds no `{` on that line — luck, not
+  only because the brace search finds no `{` on that line — luck, not
   design. Fix: skip nodes whose `location.file` is not the file being
   rewritten.
 
@@ -309,7 +309,19 @@ private:
 4. Parameter placeholders and `requires_parameters`, with the skip rules for
    unnamed/template/variadic.
 5. Automatic `#include` management, same mechanism as markers.
-6. Extend to `CONSTRUCTOR`, `DESTRUCTOR`, `FUNCTION_TEMPLATE`.
+6. Extend to `CONSTRUCTOR`, `DESTRUCTOR`, `FUNCTION_TEMPLATE`. Probing added
+   three things the earlier draft did not know:
+   - A constructor's member-init list has braces of its own and they come
+     first, so the body brace has to come from the `COMPOUND_STMT` child
+     rather than from a text scan.
+   - An uninstantiated `FUNCTION_TEMPLATE` reports `is_definition()` false and
+     exposes no body at all, so for that one kind the text decides — and a `;`
+     before the `{` is what tells a declaration from a definition.
+   - `get_arguments()` is empty for the same kind while the `PARM_DECL`
+     children are there, so parameter payloads read the children instead.
+
+   Bodies written on one line are skipped with a warning: nothing fits after
+   the line without landing outside the braces.
 7. C++ side: write `ScopeTrace.h`, apply the `ParameterCheck.h` changes.
    Independent of 1–6.
 

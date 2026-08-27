@@ -1,10 +1,10 @@
 from .constants import SCOPE_TRACE
 from .line_utils import (
     find_legacy_trace_line,
-    find_open_brace_line,
     has_include,
     include_insert_point,
     injected_span,
+    is_one_line_body,
     marker_of,
     markers_in_span
 )
@@ -18,6 +18,7 @@ from .payloads import (
     skip_reason
 )
 from .targets import (
+    body_open_brace,
     iter_target_functions,
     log_parse_problems,
     parse_translation_unit
@@ -77,13 +78,29 @@ def inject_trace_into_file(
         logger
     ):
 
-        brace_idx = find_open_brace_line(
-            lines,
-            node.extent.start.line,
-            node.extent.end.line
+        brace_idx = body_open_brace(
+            node,
+            lines
         )
 
+        #
+        # No body in this file: a declaration, or a template nothing has
+        # defined. Nothing to say about it — the definition will be found
+        # wherever it lives.
+        #
         if brace_idx is None:
+            continue
+
+        #
+        # A body written on one line cannot take a payload without its closing
+        # brace moving, and moving it is a reformat, not an injection. Said
+        # rather than done quietly, since the function did match the rule.
+        #
+        if is_one_line_body(lines, brace_idx):
+
+            logger.log(
+                f"   ⚠️  {label}() skipped: body is on one line"
+            )
             continue
 
         #

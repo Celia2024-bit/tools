@@ -8,6 +8,7 @@ only ever looks at the marker, so nothing here has to be understood twice.
 
 from .class_hierarchy import owning_class, qualified_name
 from .constants import MARKER_PREFIX, SCOPE_TRACE
+from .targets import parameters_of
 
 #
 # One space more than the brace's own indentation. Four, because that is what
@@ -206,7 +207,7 @@ def parameter_facts(node):
 
     names = []
 
-    for argument in node.get_arguments():
+    for argument in parameters_of(node):
 
         if not argument.spelling:
             return None, "has an unnamed parameter"
@@ -269,7 +270,7 @@ def skip_reason(spec, node):
     there, so it goes in the log.
     """
 
-    if spec.get("requires_parameters") and not list(node.get_arguments()):
+    if spec.get("requires_parameters") and not parameters_of(node):
         return "takes no parameters", False
 
     if uses_parameters(spec):
