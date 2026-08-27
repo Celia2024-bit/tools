@@ -321,6 +321,56 @@ void Legacy::New()
 }
 """ % STALE_PROBE
 
+#
+# A payload that names the parameters it was given, which is the whole point of
+# the parameter placeholders: a check that has to be handed the values cannot
+# be written once and reused, it has to be generated per function.
+#
+PARAM_CHECK = {
+    "check": {
+        "lines": [
+            "{indent}check_count({param_count});",
+            "{indent}check_all(\"{qualified_name}\", "
+            "{param_name_list}, {param_names});"
+        ],
+        "requires_parameters": True
+    }
+}
+
+INJECT_CHECK = {
+    "directory": "test/params",
+    "function": "",
+    "payloads": [
+        "check"
+    ]
+}
+
+#
+# The same placeholder without requires_parameters, to separate the two
+# reasons a payload gets skipped. A function taking nothing renders a count of
+# zero here rather than being passed over.
+#
+PARAM_COUNT_ONLY = {
+    "count_only": {
+        "lines": [
+            "{indent}check_count({param_count});"
+        ]
+    }
+}
+
+#
+# Every parameter placeholder at once, on the one method whose parameters can
+# all be named.
+#
+CHECK_INJECTED = (
+    "{\n"
+    "    check_count(3);  // @tj:check\n"
+    "    check_all(\"Params::Three\", {\"count\", \"price\", \"symbol\"}, "
+    "count, price, symbol);  // @tj:check\n"
+    "\n"
+    "    (void)count;\n"
+)
+
 ALIEN_MARKED_SOURCE = """#include "Legacy.h"
 
 void Legacy::Old()
@@ -361,6 +411,7 @@ void Legacy::New()
 #   must_contain /
 #   must_not_contain     text that must (not) be in some fixture afterwards,
 #                        for payloads `remaining` does not count
+#   logs / logs_absent   substrings that must (not) appear in the log
 #   warns                whether the incomplete-match warning must appear
 #
 SCENARIOS = [
@@ -776,6 +827,100 @@ SCENARIOS = [
             BOTH_INJECTED
         ]
     },
+    #
+    # Parameters. Three of the four methods under test/params cannot be handed
+    # to a check, each for its own reason, and the difference between silence
+    # and a warning is the point: one is the config getting what it asked for,
+    # the others are a check quietly not happening.
+    #
+    {
+        "name": "params: every placeholder, and the three functions skipped",
+        "payloads": PARAM_CHECK,
+        "rule": INJECT_CHECK,
+        "injected": {
+            "Params::Three"
+        },
+        "must_contain": [
+            CHECK_INJECTED
+        ],
+        "logs": [
+            "check skipped: Params::Unnamed() has an unnamed parameter",
+            "check skipped: Params::Variadic() is variadic"
+        ],
+        "logs_absent": [
+            #
+            # requires_parameters skipping a function that takes none is the
+            # rule working, so it says nothing at all.
+            #
+            "Params::Nothing"
+        ]
+    },
+    {
+        "name": "params: requires_parameters is what skips, not the placeholder",
+        "payloads": PARAM_COUNT_ONLY,
+        "rule": {
+            "directory": "test/params",
+            "function": "",
+            "payloads": [
+                "count_only"
+            ]
+        },
+        "injected": {
+            "Params::Three",
+            "Params::Nothing"
+        },
+        "must_contain": [
+            "    check_count(3);  // @tj:count_only\n",
+            "    check_count(0);  // @tj:count_only\n"
+        ],
+        "logs": [
+            "count_only skipped: Params::Unnamed() has an unnamed parameter",
+            "count_only skipped: Params::Variadic() is variadic"
+        ]
+    },
+    {
+        "name": "params: a payload naming no parameter goes in everywhere",
+        "rule": {
+            "directory": "test/params",
+            "function": ""
+        },
+        "injected": {
+            "Params::Three",
+            "Params::Unnamed",
+            "Params::Nothing",
+            "Params::Variadic"
+        },
+        "remaining": 4
+    },
+    {
+        "name": "remove: a parameter payload comes out by marker like any other",
+        "payloads": PARAM_CHECK,
+        "setup": INJECT_CHECK,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/params",
+            "function": "Three"
+        },
+        "removed": {
+            "Params::Three"
+        },
+        "must_not_contain": [
+            "check_all",
+            "check_count"
+        ]
+    },
+    {
+        "name": "examples: the parameter check example names what it can",
+        "config": "config_param_check_example.json",
+        "injected": {
+            "Params::Three"
+        },
+        "must_contain": [
+            "    ParameterCheck::check_all(\"Params::Three\", "
+            "{\"count\", \"price\", \"symbol\"}, count, price, symbol);"
+            "  // @tj:check_parameters\n"
+        ]
+    },
     {
         "name": "examples: the payloads example writes both, in order",
         "config": "config_payloads_example.json",
@@ -1177,6 +1322,22 @@ def run_scenario(scenario):
                 )
             )
 
+    for needle in scenario.get("logs", []):
+
+        if needle not in logger.text:
+
+            failures.append(
+                f"not logged: {needle!r}"
+            )
+
+    for needle in scenario.get("logs_absent", []):
+
+        if needle in logger.text:
+
+            failures.append(
+                f"logged but should not have been: {needle!r}"
+            )
+
     warned = INCOMPLETE_WARNING in logger.text
     expected_warning = scenario.get("warns", False)
 
@@ -1384,6 +1545,16 @@ def patch_span_blind():
     )
 
 
+def patch_never_skip():
+    """Render every payload into every function, parameters or not."""
+
+    return patch_function(
+        "skip_reason",
+        lambda spec, node: (None, False),
+        ["payloads", "injector"]
+    )
+
+
 SELF_CHECKS = [
     {
         "name": "targeted remove degraded to whole-file",
@@ -1502,6 +1673,22 @@ SELF_CHECKS = [
             #
             "same tree, relative includes, no include_dirs",
             "remove: pre-marker trace, targeted by function name"
+        ]
+    },
+    {
+        "name": "parameters never stand in the way",
+        "patch": patch_never_skip,
+        "must_fail": [
+            "params: every placeholder, and the three functions skipped",
+            "params: requires_parameters is what skips, not the placeholder"
+        ],
+        "must_pass": [
+            #
+            # Nothing here asks about parameters, so there was never a skip to
+            # take away.
+            #
+            "params: a payload naming no parameter goes in everywhere",
+            "payloads: listed order, indent and every placeholder"
         ]
     },
     {

@@ -6,7 +6,12 @@ from .line_utils import (
     marker_of,
     markers_in_span
 )
-from .payloads import BUILT_IN_PAYLOADS, build_context, render
+from .payloads import (
+    BUILT_IN_PAYLOADS,
+    build_context,
+    render,
+    skip_reason
+)
 from .targets import (
     iter_target_functions,
     log_parse_problems,
@@ -79,16 +84,31 @@ def inject_trace_into_file(
             brace_idx
         ) is not None
 
-        wanted = [
-            name
-            for name in payload_names
-            if name in payload_table
-            and not (
-                name == SCOPE_TRACE
-                and
-                legacy_present
+        wanted = []
+
+        for name in payload_names:
+
+            if name not in payload_table:
+                continue
+
+            if name == SCOPE_TRACE and legacy_present:
+                continue
+
+            reason, warn = skip_reason(
+                payload_table[name],
+                node
             )
-        ]
+
+            if reason:
+
+                if warn:
+
+                    logger.log(
+                        f"   ⚠️  {name} skipped: {label}() {reason}"
+                    )
+                continue
+
+            wanted.append(name)
 
         begin, end = injected_span(
             lines,
@@ -153,9 +173,16 @@ def inject_trace_into_file(
 
         if lines[begin:end] == desired:
 
-            logger.log(
-                f"   ✅ Already injected: {label}()"
-            )
+            #
+            # Both empty means every payload was skipped, which the skip
+            # itself has already accounted for — saying "already injected"
+            # about a function that has nothing in it would be a lie.
+            #
+            if desired:
+
+                logger.log(
+                    f"   ✅ Already injected: {label}()"
+                )
             continue
 
         added = [

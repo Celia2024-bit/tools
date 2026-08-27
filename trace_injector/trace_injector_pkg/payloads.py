@@ -31,6 +31,18 @@ BUILT_IN_PAYLOADS = {
 }
 
 
+#
+# Placeholders that need the parameters to be nameable. A template using none
+# of them does not care whether they are, which is why the check is per
+# payload rather than per function.
+#
+PARAMETER_PLACEHOLDERS = (
+    "param_names",
+    "param_name_list",
+    "param_count"
+)
+
+
 def resolve_payloads(config):
     """
     The payload table for this config: the built-in entries, overridden and
@@ -68,6 +80,15 @@ def resolve_payloads(config):
                     f"payload {name!r}: every entry in \"lines\" must be a "
                     f"string, got {template!r}."
                 )
+
+        if not isinstance(
+            spec.get("requires_parameters", False),
+            bool
+        ):
+            raise ValueError(
+                f"payload {name!r}: \"requires_parameters\" must be true or "
+                "false."
+            )
 
         table[name] = spec
 
@@ -123,17 +144,96 @@ def body_indent(lines, brace_idx):
     return leading.replace("\n", "").replace("\r", "") + BODY_INDENT
 
 
+def parameter_facts(node):
+    """
+    The parameter placeholders for this function, or (None, reason) when its
+    parameters cannot be written out.
+
+    Both refusals are about naming, not about types. A parameter with no name
+    cannot be passed along, and a variadic tail cannot be enumerated at all —
+    a payload that expands to check_all(..., a, b) would silently ignore
+    everything after b, which is worse than not injecting.
+    """
+
+    if node.type is not None and node.type.is_function_variadic():
+        return None, "is variadic"
+
+    names = []
+
+    for argument in node.get_arguments():
+
+        if not argument.spelling:
+            return None, "has an unnamed parameter"
+
+        names.append(argument.spelling)
+
+    quoted = ", ".join(
+        f"\"{name}\""
+        for name in names
+    )
+
+    return {
+        "param_names": ", ".join(names),
+        "param_name_list": "{" + quoted + "}",
+        "param_count": str(len(names))
+    }, None
+
+
 def build_context(node, label, lines, brace_idx):
-    """The facts a template may refer to."""
+    """
+    The facts a template may refer to. The parameter placeholders are absent
+    when they cannot be produced — skip_reason keeps any payload that would
+    have referred to them from being rendered at all.
+    """
 
     parent = owning_class(node)
 
-    return {
+    context = {
         "indent": body_indent(lines, brace_idx),
         "qualified_name": label,
         "function": node.spelling,
         "class": qualified_name(parent) if parent is not None else ""
     }
+
+    facts, _ = parameter_facts(node)
+
+    if facts is not None:
+        context.update(facts)
+
+    return context
+
+
+def uses_parameters(spec):
+
+    return any(
+        "{" + placeholder + "}" in template
+        for template in spec["lines"]
+        for placeholder in PARAMETER_PLACEHOLDERS
+    )
+
+
+def skip_reason(spec, node):
+    """
+    Why this payload cannot go into this function, as (reason, warn), or
+    (None, False) when it can.
+
+    `warn` separates the two kinds. "requires_parameters and there are none"
+    is the config getting what it asked for and says nothing. A parameter that
+    cannot be named is a surprise: a check was asked for and will not be
+    there, so it goes in the log.
+    """
+
+    if spec.get("requires_parameters") and not list(node.get_arguments()):
+        return "takes no parameters", False
+
+    if uses_parameters(spec):
+
+        facts, reason = parameter_facts(node)
+
+        if facts is None:
+            return reason, True
+
+    return None, False
 
 
 def render(name, spec, context):

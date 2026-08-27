@@ -143,10 +143,40 @@ Placeholders in a template:
 | `{qualified_name}` | `trading::AlphaStrategy::Run` |
 | `{function}` | `Run` |
 | `{class}` | `trading::AlphaStrategy`, empty for a free function |
+| `{param_names}` | `count, price, symbol` — ready to pass along |
+| `{param_name_list}` | `{"count", "price", "symbol"}` — the names as strings |
+| `{param_count}` | `3` |
 
 Templates go through Python's `str.format`, so a literal brace has to be
 doubled: `if (x) {{` . Leave the trailing newline off — the tool appends the
 marker and the newline itself.
+
+**Parameters.** A payload that names its parameters cannot always be written.
+Three cases, and the tool treats them differently:
+
+| The function | What happens |
+|---|---|
+| takes parameters, all named | injected |
+| takes none, and the payload sets `"requires_parameters": true` | skipped, silently — the config asked for exactly this |
+| has an unnamed parameter (`void f(int)`) | skipped, **with a warning** |
+| is variadic (`void f(const char*, ...)`) | skipped, **with a warning** |
+
+The last two are refusals about naming, not about types. An unnamed parameter
+cannot be passed along, and a variadic tail cannot be enumerated at all — a
+template expanding to `check_all(..., a, b)` would silently ignore everything
+after `b`, which is worse than not injecting. That is a check you asked for and
+will not get, so it goes in the log:
+
+```
+⚠️  check_parameters skipped: Params::Unnamed() has an unnamed parameter
+⚠️  check_parameters skipped: Params::Variadic() is variadic
+```
+
+`requires_parameters` is a separate switch, and only about the empty case. Set
+it when the payload makes no sense for a function taking nothing; leave it off
+and `{param_count}` renders `0` and `{param_name_list}` renders `{}`. Both
+warnings apply either way — they are triggered by the placeholders, not by the
+flag. See `config_param_check_example.json`.
 
 **Editing a template.** Change one and rerun `inject`: the region at the top
 of each matching body is rebuilt from the templates, so the lines come out
@@ -275,6 +305,7 @@ Echoing that would train you to ignore the warning that matters.
 | `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required |
 | `config_base_class_remove_example.json` | the exact undo of the one above — same fields, `inject` swapped for `remove` |
 | `config_payloads_example.json` | a custom payload alongside the built-in one |
+| `config_param_check_example.json` | a payload that names the parameters it was handed |
 
 ## Tests
 
@@ -292,15 +323,15 @@ the fixture trees back exactly as it found them. Three parts:
 asserts the exact set of functions that received (or lost) a trace. Because
 the expected sets are exact, the classes that must NOT match are asserted by
 their absence — `NetworkMgr::Run` (same method name, unrelated class) and
-`LocalCache::Execute` (same method name, no base class). Two of them run the
+`LocalCache::Execute` (same method name, no base class). Three of them run the
 shipped example configs for real rather than a copy of their rules.
 
-**2. Self checks.** Breaks the tool on purpose nine ways — degrade targeted
+**2. Self checks.** Breaks the tool on purpose ten ways — degrade targeted
 remove to the whole-file scan, stop restricting definitions to the main file,
 widen the parse warning past fatal, drop the pre-marker fallback, go blind to
 markers, ignore a rule's payload list, leave placeholders unsubstituted, stop
-seeing the region already in a body, typo a `base_class` in an example
-config — and confirms the right scenarios go red
+seeing the region already in a body, let parameter payloads into functions
+whose parameters cannot be named, typo a `base_class` in an example config — and confirms the right scenarios go red
 and the others stay green. A green suite only means something if it can go
 red; this is what stops an assertion from quietly becoming vacuous. Skipped
 when part 1 is already failing, since it asserts *which* scenarios fail.
@@ -350,6 +381,19 @@ Payload scenarios:
 - `remove` naming one payload leaves the other, and its blank separator, alone
 - `remove` naming none reaches a marker whose payload the config no longer
   defines; `remove` naming some spares it
+
+Parameter scenarios (`test/params`, one method per shape a parameter payload
+has to cope with — several named parameters, one unnamed, none, variadic):
+
+- every parameter placeholder resolved, asserted against the exact bytes
+- the unnamed and the variadic method are each skipped with a warning naming
+  the reason; the one taking nothing is skipped silently under
+  `requires_parameters`, and the log does not mention it at all
+- without `requires_parameters`, that same method renders a count of `0`
+  instead — the flag is what skips, not the placeholder
+- a payload naming no parameter goes into all four, so the refusals are about
+  the payload and not about the function
+- a parameter payload comes back out by its marker like any other
 
 Plus two config guards: every shipped `config_*example*.json` still passes
 validation, and five malformed `payloads` configs are still rejected. Both

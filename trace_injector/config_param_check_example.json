@@ -1,0 +1,22 @@
+{
+    "inject": [
+        {
+            "directory": "test/params",
+            "file": "",
+            "base_class": "",
+            "function": "",
+            "payloads": [
+                "check_parameters"
+            ]
+        }
+    ],
+
+    "payloads": {
+        "check_parameters": {
+            "lines": [
+                "{indent}ParameterCheck::check_all(\"{qualified_name}\", {param_name_list}, {param_names});"
+            ],
+            "requires_parameters": true
+        }
+    }
+}
