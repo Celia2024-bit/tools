@@ -1173,7 +1173,7 @@ SCENARIOS = [
             "Params::Three"
         },
         "must_contain": [
-            "    ParameterCheck::check_all(\"Params::Three\", "
+            "    check_all(\"Params::Three\", "
             "{\"count\", \"price\", \"symbol\"}, count, price, symbol);"
             "  // @tj:check_parameters\n",
             "#include \"ParameterCheck.h\"  // @tj:check_parameters\n"

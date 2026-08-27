@@ -248,7 +248,7 @@ flag. See `config_param_check_example.json`.
 ```json
 "payloads": {
     "check_parameters": {
-        "lines": [ "{indent}ParameterCheck::check_all(\"{qualified_name}\", {param_name_list}, {param_names});" ],
+        "lines": [ "{indent}check_all(\"{qualified_name}\", {param_name_list}, {param_names});" ],
         "include": "trading/ParameterCheck.h",
         "requires_parameters": true
     }
