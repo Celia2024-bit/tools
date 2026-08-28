@@ -84,6 +84,44 @@ def injected_region_end(
     return i
 
 
+def injected_runs(
+    lines,
+    begin,
+    end
+):
+    """
+    Every run of injected blocks in lines[begin:end], as (start, stop) pairs.
+
+    A function can carry injected code in two places, not one: the blocks at the
+    top of the body, and the closing half of a block that wrapped it. Looking
+    only at the top is how you delete a `try {` and leave its catch arms behind
+    — a `}` too many, in a file that no longer compiles, from a remove that
+    reported success.
+
+    Runs are yielded top-down and never overlap, so a caller can delete them
+    bottom-up without recomputing anything.
+    """
+
+    i = max(begin, 0)
+
+    stop = min(end, len(lines))
+
+    while i < stop:
+
+        if not is_injected_line(lines[i]):
+            i += 1
+            continue
+
+        run_end = injected_region_end(
+            lines,
+            i
+        )
+
+        yield i, run_end
+
+        i = run_end
+
+
 def injected_kinds(
     lines,
     begin,
@@ -158,6 +196,35 @@ def find_open_brace_line(
     for i in range(begin, end):
 
         if "{" in lines[i]:
+            return i
+
+    return None
+
+
+def find_close_brace_line(
+    lines,
+    brace_idx,
+    end_line
+):
+    """
+    Index of the line carrying the function's closing brace, or None.
+
+    Searched backwards from the end of the extent, because a body of any size
+    has braces of its own and only the last one closes the function.
+
+    None when the closing brace shares a line with the opening one — a
+    `int size() const { return count_; }` — since there is then no line between
+    the two to wrap, and a caller that inserted anyway would be writing into the
+    middle of a statement.
+    """
+
+    for i in range(
+        min(end_line, len(lines)) - 1,
+        brace_idx,
+        -1
+    ):
+
+        if "}" in lines[i]:
             return i
 
     return None

@@ -1,12 +1,23 @@
 from .constants import build_injected_blocks, normalize_inject_types
 from .includes import add_includes
-from .line_utils import already_injected, find_open_brace_line
+from .line_utils import (
+    already_injected,
+    find_close_brace_line,
+    find_open_brace_line
+)
 from .targets import (
     get_function_param_names,
     iter_target_functions,
     log_parse_problems,
     parse_translation_unit,
 )
+
+#
+# Which half of a function an insertion goes into. Ordered, and the order is
+# what decides the tie when both land on the same line — see the sort below.
+#
+ABOVE_BODY = 0
+BELOW_BODY = 1
 
 
 def inject_trace_into_file(
@@ -62,35 +73,91 @@ def inject_trace_into_file(
             inject_types=inject_types
         )
 
-        if blocks:
+        if not blocks:
+            continue
 
-            lines_to_inject = [
-                line
-                for _, block in blocks
-                for line in block
-            ]
+        above = [
+            line
+            for _, top, _ in blocks
+            for line in top
+        ]
 
-            kinds = [
-                kind
-                for kind, _ in blocks
-            ]
+        #
+        # Reversed: the kinds nest, so the one whose `try` opens last is the one
+        # whose `catch` has to close first. Only "guard" writes down here today,
+        # but a second wrapping kind would be silently mis-nested otherwise.
+        #
+        below = [
+            line
+            for _, _, tail in reversed(blocks)
+            for line in tail
+        ]
 
-            insertions.append((brace_idx + 1, lines_to_inject, label, kinds))
+        kinds = [
+            kind
+            for kind, _, _ in blocks
+        ]
 
-            kinds_written.update(kinds)
+        close_idx = None
+
+        if below:
+
+            close_idx = find_close_brace_line(
+                lines,
+                brace_idx,
+                node.extent.end.line
+            )
+
+            #
+            # A body written entirely on its opening line has nowhere to put the
+            # closing half, and guessing would mean writing a `}` into the
+            # middle of a statement. Skipped whole rather than half-injected.
+            #
+            if close_idx is None:
+
+                logger.log(
+                    f"   ⏭️  Skipped: {label}() — body shares its line with "
+                    "the braces"
+                )
+                continue
+
+        insertions.append(
+            (brace_idx + 1, ABOVE_BODY, above, label, kinds)
+        )
+
+        if below:
+
+            #
+            # No label: one function is one log line and one count, however many
+            # places the blocks had to be written into.
+            #
+            insertions.append(
+                (close_idx, BELOW_BODY, below, None, kinds)
+            )
+
+        kinds_written.update(kinds)
 
     if not insertions:
         logger.log("   ✅ No changes required.")
         return
 
     #
-    # apply bottom-up so earlier indices stay valid
+    # Apply bottom-up so earlier indices stay valid. The tie-break matters: an
+    # empty body puts the closing half on the same line as the opening one, and
+    # inserting the opening first would leave the catch arms sitting above the
+    # `try` they belong to.
     #
-    insertions.sort(key=lambda x: x[0], reverse=True)
+    insertions.sort(
+        key=lambda item: (item[0], item[1]),
+        reverse=True
+    )
 
-    for insert_idx, lines_to_inject, label, kinds in insertions:
+    for insert_idx, _, lines_to_inject, label, kinds in insertions:
         for entry in reversed(lines_to_inject):
             lines.insert(insert_idx, entry)
+
+        if label is None:
+            continue
 
         #
         # The kinds, not just the name. A rule asking for validate writes no
