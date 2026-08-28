@@ -1,9 +1,10 @@
 # Trace Injector
 
-Inserts (or strips) instrumentation at the top of C++ function bodies, driven
-by `config.json` — a `ScopeTrace` guard, a parameter check, or both, chosen per
-rule via `inject_type`. Function boundaries come from libclang's AST, not from
-regex, so overloads and multi-line signatures are handled correctly.
+Inserts (or strips) instrumentation in C++ function bodies, driven by
+`config.json` — a `ScopeTrace` guard, a parameter check, a `try`/`catch` around
+the body, or any combination, chosen per rule via `inject_type`. Function
+boundaries come from libclang's AST, not from regex, so overloads and multi-line
+signatures are handled correctly.
 
 ```
 pip install libclang
@@ -97,6 +98,9 @@ directories can get different treatment:
 |---|---|
 | `trace` | the `ScopeTrace` guard |
 | `validate` | a `__param_names[]` table and a `validate_params(...)` call |
+| `guard` | a `try` / `catch` around the body, reporting what it caught |
+
+#### `validate`
 
 ```cpp
 static const char* __param_names[] = { "account_id", "notional", "max_notional" };
@@ -138,17 +142,69 @@ Overloads are handled per definition, not per name: two overloads with
 different parameter lists each get their own — so `RiskChecker::Margin` appears
 twice in the log, once per definition.
 
+#### `guard`
+
+The one kind that does not just prepend a block. It wraps the body it found,
+leaving the code between the braces exactly as it was:
+
+```cpp
+bool OrderMgr::SubmitOrder(
+    int order_id
+)
+{
+    try  // inject automatically: guard
+    {  // inject automatically: guard
+
+    return true;
+    }  // inject automatically: end of guard
+    catch (const std::exception& error)  // inject automatically: end of guard
+    {  // inject automatically: end of guard
+        ErrorLogger::LogError("OrderMgr", "SubmitOrder", "std::exception", error.what());  // inject automatically: end of guard
+        throw;  // inject automatically: end of guard
+    }  // inject automatically: end of guard
+    catch (...)  // inject automatically: end of guard
+    {  // inject automatically: end of guard
+        ErrorLogger::LogError("OrderMgr", "SubmitOrder", "unknown", "unrecognised exception");  // inject automatically: end of guard
+        throw;  // inject automatically: end of guard
+    }  // inject automatically: end of guard
+}
+```
+
+Four things about that are deliberate:
+
+- **`throw;`, always.** The guard reports the error and rethrows it. Swallowing
+  would change what your program does, and in a function that returns something
+  it would run off the end of the body without returning — undefined behaviour,
+  not a compile error. If you want the exception stopped, stop it yourself; this
+  tool does not make that decision for you.
+- **The body is not reindented.** It is now one level deeper than it looks. That
+  is the price of this tool's actual promise: `remove` gives you back the file
+  you had, byte for byte, and reindenting would turn every injection into a diff
+  across the whole function.
+- **Two arms, so nothing gets past it.** `catch (...)` reports what
+  `std::exception` cannot describe. Whatever error code the exception carries is
+  reachable through `error.what()`.
+- **It goes innermost.** With `["trace", "validate", "guard"]`, the `try` opens
+  *below* the trace object and the parameter check, so the `ScopeTrace` is still
+  alive while the catch runs and its destructor logs the exit afterwards.
+
+A body written entirely on its opening line — `int size() const { return n_; }` —
+is skipped and says so, because there is no line between the braces to wrap and
+guessing would mean writing a `}` into the middle of a statement.
+
 `remove` rules do **not** take `inject_type`. See below for why.
 
 ### The `#include` it adds
 
-Injected code names `ScopeTrace` and `validate_params`, so the file it lands in
-has to include the header each of those lives in. The tool adds it:
+Injected code names `ScopeTrace`, `validate_params` and `ErrorLogger`, so the
+file it lands in has to include the header each of those lives in. The tool adds
+it:
 
 ```cpp
 #include "RiskChecker.h"
 #include "ScopeTrace.h"  // inject automatically: include for trace
 #include "ParameterCheck.h"  // inject automatically: include for validate
+#include "ErrorLogger.h"  // inject automatically: include for guard
 ```
 
 There is no config key for this and no path in it. The headers are named the
@@ -159,6 +215,15 @@ through your build's `-I`. Nothing here goes looking for them on disk.
 |---|---|---|
 | `trace` | `ScopeTrace.h` | the sibling `util` repo, `ScopeTrace/` |
 | `validate` | `ParameterCheck.h` | the sibling `util` repo, `Parameter_Check/` |
+| `guard` | `ErrorLogger.h` | the sibling `util` repo, at the top |
+
+The `try`/`catch` a `guard` writes needs no header of its own — but its catch
+arms have to report the error *somewhere*, and `ErrorLogger::LogError` is where
+this project reports errors. Reporting nothing at all was the alternative, and a
+guard that silently rethrows is not worth injecting. If your tree reaches
+`ErrorLogger` some other way, or you want a different reporter, that is the
+`header` field of the `guard` entry in `INJECTION_KINDS` and the two lines above
+it.
 
 `ParameterCheck.h` is yours to prepare before the first `validate` run — it and
 the `CheckTraits.h` / `Types.h` it includes are hand-maintained, and this tool
@@ -235,8 +300,8 @@ one spelled exactly like the injected version, is not this tool's to delete.
 > with the old version first, or delete them by hand.
 
 **A remove rule says where to clean, never what.** It has no `inject_type`, and
-that is deliberate: whatever the injector left at the top of a matched
-function comes out — trace, validate, both — and the function is left
+that is deliberate: whatever the injector left in a matched function comes out —
+trace, validate, both halves of a guard, all of it — and the function is left
 byte-identical to how it started.
 
 Being selective was a bug, not a feature. A remove that understood only
@@ -250,11 +315,13 @@ filters decide the *scope*, and their presence also decides *how* the file is
 read:
 
 - **Any filter present** (`function`, `base_class`, or a matching `exclude`)
-  → the file is parsed and only the blocks sitting at the top of the selected
-  functions are deleted. Same selection pass as `inject`, so the same rule
-  takes back out exactly what it put in, and the log names each function it
-  removed from. Note this means adding a single `exclude` entry switches an
-  otherwise unfiltered `remove` onto the parsing path.
+  → the file is parsed and only the marked lines inside the selected functions
+  are deleted — the whole body is searched, not just the top of it, because a
+  `guard` leaves its catch arms just above the function's own brace. Same
+  selection pass as `inject`, so the same rule takes back out exactly what it put
+  in, and the log names each function it removed from. Note this means adding a
+  single `exclude` entry switches an otherwise unfiltered `remove` onto the
+  parsing path.
 - **No filter at all** → no parsing, just a line scan that strips *every*
   marked block in the matched files. Blunter, but it also catches blocks left
   over from a rule you have since edited, and blocks in files clang cannot
@@ -267,11 +334,17 @@ read:
    ✨ Removed injection [trace]
 ```
 
+Counted per injection, not per marked run: a `guard` writes at both ends of a
+function, and the run of catch arms is the bottom of an injection already
+counted. So the number the summary reports for a remove is the number a matching
+inject reported, on either path.
+
 Adding a new injection kind does not require touching `remove`, or the include
 handling either. A kind is one entry in `INJECTION_KINDS` (`constants.py`) — its
 name, the function that writes it, the header it needs — and everything else
-reads that entry: the marker is derived from the name, so the two halves cannot
-drift apart.
+reads that entry: the markers are derived from the name, so the two halves cannot
+drift apart. The writer returns two lists, what goes above the body and what goes
+below it; a kind that only prepends returns nothing for the second.
 
 ### `directory` vs `include_dirs`
 
@@ -352,10 +425,17 @@ reported first, because it is higher up the file.
   are often one-liners in headers.
 - **The headers have to be reachable.** The tool writes the `#include`; making
   the name resolve is your build's job, the same `-I` your own headers already
-  rely on. Neither header ships here — both live in the sibling `util` repo,
-  and `ScopeTrace.h` needs the `Logger.h` next to it. Nothing is checked before
-  the sweep: a `validate` run against a `ParameterCheck.h` you have not prepared
-  injects happily and fails at compile time.
+  rely on. None of the three ships here — they all live in the sibling `util`
+  repo, and `ScopeTrace.h` needs the `Logger.h` next to it. Nothing is checked
+  before the sweep: a `validate` run against a `ParameterCheck.h` you have not
+  prepared injects happily and fails at compile time.
+- **A `guard` cannot wrap a constructor's initialiser list.** A `try` covering
+  member initialisation is a *function-try-block* — `Foo::Foo() try : x_(f())`,
+  with the `try` before the colon — and that is not the shape this writes. A
+  constructor gets its body wrapped and its initialiser list left outside it,
+  which is valid C++ but not what you would want if `f()` is the thing that
+  throws.
+- **A `guard` does not reindent the body.** By design; see above.
 
 ## Examples
 
@@ -370,6 +450,8 @@ All under `configs_examples/`:
 | `config_base_class_remove_example.json` | the exact undo of the one above — same fields, `inject` swapped for `remove` |
 | `config_inject_types_example.json` | two directories, a different `inject_type` for each — so one tree gets both includes and the other only `ScopeTrace.h` |
 | `config_inject_types_remove_example.json` | the undo of the one above — one unfiltered rule per tree, no `inject_type` needed |
+| `config_guard_example.json` | all three kinds over one tree, `guard` alone over another |
+| `config_guard_remove_example.json` | the undo of the one above |
 
 ## Tests
 
@@ -391,21 +473,26 @@ their absence — `NetworkMgr::Run` (same method name, unrelated class) and
 `LocalCache::Execute` (same method name, no base class). Two of them run the
 shipped example configs for real rather than a copy of their rules.
 
-Every scenario also carries an include invariant it did not have to ask for:
-per file, the injected `#include` is present exactly when there is injected code
-needing it, and never twice. That turns each inject scenario into a check that
-the include was added and each remove scenario into a check that it was taken
-away — without any scenario hard-coding a count. Both ways of getting it wrong
-are quiet: a missing include is a file that does not compile, and a leftover one
-drags `Types.h` into a translation unit with no use for it.
+Every scenario also carries two invariants it did not have to ask for: per file,
+the injected `#include` is present exactly when there is injected code needing it
+and never twice, and every fixture has as many `{` as `}`. The first turns each
+inject scenario into a check that the include was added and each remove scenario
+into a check that it was taken away — without any scenario hard-coding a count.
+Both ways of getting that wrong are quiet: a missing include is a file that does
+not compile, and a leftover one drags `Types.h` into a translation unit with no
+use for it. The brace count is there because `guard` is the first kind that writes
+below the body as well as above it, so it is the first that can leave a file with
+an unmatched brace — a whole category of breakage no marker count would see.
 
-**2. Self checks.** Breaks the tool on purpose eight ways — degrade targeted
+**2. Self checks.** Breaks the tool on purpose eleven ways — degrade targeted
 remove to the whole-file scan, make remove blind to everything but `trace`, pass
 one argument fewer than the name table names, claim every kind the rule asked for
 whether or not it wrote anything, inject blocks without their include, leave the
 include behind after the last block went, report the tool's own header as a parse
-problem, typo a `base_class` in an example config — and confirms the right
-scenarios go red and the others stay green. A green suite only means something if
+problem, open a `guard`'s `try` and never close it, drop the `throw;` from its
+catch arms, look only at the top of the body when removing, typo a `base_class` in
+an example config — and confirms the right scenarios go red and the others stay
+green. A green suite only means something if
 it can go red; this is what stops an assertion from quietly becoming vacuous.
 Skipped when part 1 is already failing, since it asserts *which* scenarios fail.
 
@@ -413,6 +500,16 @@ The claim-every-kind one changes no file at all: counts, byte equality, both
 round trips stay green. What goes red is the log — which functions it says got a
 validate block — and the include, since both are meant to follow *what was
 written* rather than what was asked for. That the two fail together is the point.
+
+The three `guard` breakages are graded, and what each one is invisible to is the
+finding. An unclosed `try` still counts, removes and round-trips perfectly — only
+the brace check refuses it. A guard with no `throw;` passes even that: right size,
+right place, right include, restores byte for byte, and every exception in the
+program now stops where it was thrown. Only reading the emitted C++ back notices.
+And a targeted remove that looks only at the top of the body — which was correct
+code until a kind wrapped a body — leaves the catch arms behind while reporting
+success, so it goes red on the guard scenarios and stays green on every
+`trace`/`validate` one.
 
 The two include breakages are opposites, and their `must_pass` lists are where
 the rule actually gets pinned down. Never adding the include leaves *"warns and
@@ -451,20 +548,30 @@ Inject scenarios:
 - labels stay fully qualified with no `base_class` filter in play
 - free functions: namespace qualified, bare at file scope
 - `validate` names match the arguments at every arity
+- `guard` wraps every body: both arms, both rethrows, closing at the bottom
+- all three kinds in one function, in the order that has to hold
 
-That last one is the only scenario that reads the injected code instead of
-counting it: for every validate block in the fixtures, the quoted names and the
+The last two are the only scenarios that read the injected code instead of
+counting it. For every validate block in the fixtures, the quoted names and the
 arguments passed have to be the same identifiers in the same order. Counts
 cannot see that distinction, which is why `test/src/risk/RiskChecker.cpp` exists
 — three- and four-parameter methods, an overload pair whose two definitions
 must not share a parameter list, a parameter with no name, and one method with
 no parameters at all.
 
-It also pins down the mapping the log reports: `trace` for all 21 functions,
-`validate` for exactly the 8 that take parameters. Asserted against the log
-rather than the files, because the log is what a reader judges the run by — and
-with 13 of 21 taking no arguments, "validate did nothing" is what a *correct* run
-looks like unless the log says otherwise.
+Every guard is read back the same way: two catch arms, both rethrowing, both
+naming the function they were written into, and the whole thing sitting directly
+above that function's closing brace. Every `try` written has to have a matching
+set of arms, so half a guard is reported rather than counted. The placement matters
+as much as the shape — arms inserted anywhere else in the body leave the braces
+balanced and the file compiling, with everything after them quietly unguarded.
+
+The validate scenario also pins down the mapping the log reports: `trace` for all
+21 functions, `validate` for exactly the 8 that take parameters. Asserted against
+the log rather than the files, because the log is what a reader judges the run by —
+and with 13 of 21 taking no arguments, "validate did nothing" is what a *correct*
+run looks like unless the log says otherwise. A `guard` sweep is the opposite case:
+every function is wrapped, and nothing anywhere gets a `ScopeTrace`.
 
 Remove scenarios (each injects first, then removes, and asserts how many
 blocks are left behind — counted per kind, so validate debris a trace count
@@ -473,12 +580,20 @@ walks past still fails the assertion):
 - unfiltered rule strips the whole file, unnamed
 - unfiltered rule strips `validate` as well as `trace`
 - targeted rule strips `validate` as well as `trace`
+- unfiltered rule strips both halves of a `guard`, counting each guard once
+- targeted rule strips both halves of a `guard`
 - `function` only → every `Run()`, nothing else
 - `base_class` → the overrides only, `LocalCache::Execute` survives
 - `base_class` with `include_dirs` missing → warns, removes nothing
 - function-level `exclude` → everything except the excluded `Run()`s
 - the two `base_class` example configs round-trip to zero traces
 - the two `inject_types` example configs clean both fixture trees
+- the two `guard` example configs clean both fixture trees
+
+The `guard` removes assert what the setup planted before the remove runs. A remove
+scenario claiming "nothing left" passes just as well when the inject never wrote
+anything, and half a guard is exactly the kind of inject bug that would make it
+pass.
 
 Round trips assert byte equality rather than counts, in both directions:
 
@@ -490,6 +605,12 @@ inject -> remove -> inject  == what the first inject produced
 The second is the one that earns its keep. A remove that leaves one block of a
 two-block injection behind passes every count-based check; only re-injecting
 and comparing catches the duplicate it causes.
+
+Byte equality says the most about `guard`, the one kind that does not simply
+prepend: it proves the closing half went in above the function's own brace and
+came back out without taking a line of the body with it. Eight trips are run:
+trace only, trace + validate, guard only, all three at once, two of those targeted
+both ways, and both shipped example pairs.
 
 Plus a guard that every shipped `config_*example*.json` still passes
 validation.
