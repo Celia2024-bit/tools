@@ -7,6 +7,14 @@ import shutil
 from pathlib import Path
 from jinja2 import Template
 
+#
+# A declaration, not a call. "bool isValid() const" counts; "p.isValid()" and
+# "ptr->empty()" do not -- those are the type using somebody else's check, and
+# used to be read as the type having one of its own.
+#
+MEMBER_ISVALID_RE = re.compile(r'(?<![\w.>])isValid\s*\(\s*\)')
+MEMBER_EMPTY_RE = re.compile(r'(?<![\w.>])empty\s*\(\s*\)')
+
 def check_types_header(types_path: Path) -> bool:
     """
     Statically analyzes Types.h to verify that all custom types meet
@@ -45,8 +53,8 @@ def check_types_header(types_path: Path) -> bool:
 
         body = match.group(1) if match else ""
 
-        has_is_valid = "isValid" in body
-        has_empty = "empty" in body
+        has_is_valid = bool(MEMBER_ISVALID_RE.search(body))
+        has_empty = bool(MEMBER_EMPTY_RE.search(body))
         has_traits = struct_name in check_traits_matches
 
         if not (has_is_valid or has_empty or has_traits):
