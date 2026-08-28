@@ -51,6 +51,49 @@ CHECK_TRAITS_SPECIALIZATION_RE = re.compile(
 MEMBER_ISVALID_RE = re.compile(r'(?<![\w.>])isValid\s*\(\s*\)')
 MEMBER_EMPTY_RE = re.compile(r'(?<![\w.>])empty\s*\(\s*\)')
 
+#
+# Writing a header that nobody asked to change is not free: it moves the mtime,
+# and every translation unit that includes ParameterCheck.h then rebuilds. Run
+# from a tool that sweeps a whole tree, that is a full rebuild per run.
+#
+# The tempting shortcut is to skip the script entirely when the output already
+# exists. That skips the wrong thing. "It exists" says nothing about WHICH
+# Types.h it was generated against, and the check of Types.h is this script's
+# only gate -- callers rely on a rejection here to abort before they write
+# anything of their own. So validate and render every time, unconditionally,
+# and let only the write be conditional.
+#
+def write_text_if_changed(target: Path, content: str) -> bool:
+    """
+    Write content to target unless it is already there. True if it wrote.
+
+    Comparison goes through read_text(), whose newline translation matches
+    write_text()'s, so a header written as CRLF on Windows still compares equal
+    to the LF text it was rendered from and does not get rewritten every run.
+    """
+
+    if target.exists() and target.read_text(encoding='utf-8') == content:
+        return False
+
+    target.write_text(content, encoding='utf-8')
+    return True
+
+
+def copy_if_changed(source: Path, target: Path) -> bool:
+    """
+    Byte-for-byte copy, skipped when target already matches. True if it copied.
+
+    Bytes rather than text here, because this file is copied and not rendered:
+    comparing what copy2 would actually produce keeps the two halves honest.
+    """
+
+    if target.exists() and target.read_bytes() == source.read_bytes():
+        return False
+
+    shutil.copy2(source, target)
+    return True
+
+
 def check_types_header(types_path: Path) -> bool:
     """
     Statically analyzes Types.h to verify that all custom types meet
@@ -162,8 +205,11 @@ def generate_and_deploy(types_path: Path, output_dir: Path, force: bool = False)
     # Step 3: Copy CheckTraits.h to the SAME folder as Types.h
     types_dir = types_path.parent
     target_traits_in_types_dir = types_dir / "CheckTraits.h"
-    shutil.copy2(check_traits_src, target_traits_in_types_dir)
-    print(f"--> Successfully copied CheckTraits.h to Types directory: {target_traits_in_types_dir}")
+
+    if copy_if_changed(check_traits_src, target_traits_in_types_dir):
+        print(f"--> Successfully copied CheckTraits.h to Types directory: {target_traits_in_types_dir}")
+    else:
+        print(f"--> CheckTraits.h already up to date, left alone: {target_traits_in_types_dir}")
 
     # Ensure ParameterCheck.h output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -184,8 +230,11 @@ def generate_and_deploy(types_path: Path, output_dir: Path, force: bool = False)
         check_traits_header_path=traits_include_str
     )
 
-    target_parameter_check_path.write_text(rendered_code, encoding='utf-8')
-    print(f"--> Successfully generated: {target_parameter_check_path}")
+    if write_text_if_changed(target_parameter_check_path, rendered_code):
+        print(f"--> Successfully generated: {target_parameter_check_path}")
+    else:
+        print(f"--> Already up to date, left alone: {target_parameter_check_path}")
+
     print(f"    * Includes Types.h from: '{types_include_str}'")
     print(f"    * Includes CheckTraits.h from: '{traits_include_str}'")
 
