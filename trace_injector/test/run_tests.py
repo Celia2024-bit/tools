@@ -16,6 +16,11 @@ Three parts, in order:
                       match (NetworkMgr::Run, LocalCache::Execute) is
                       asserted by its absence.
 
+                      Every scenario also gets check_include_consistency()
+                      for free: whatever it was written to measure, the
+                      state it leaves behind still has to be one the
+                      compiler would accept.
+
   2. SELF_CHECKS    - breaks the tool on purpose and confirms part 1
                       notices. A green suite only means something if it
                       can go red; these guard against an assertion
@@ -40,6 +45,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -92,6 +98,23 @@ INJECTED_MARKERS = (
     "static const char* __param_names[]",
     "validate_params("
 )
+
+#
+# The include each kind needs, spelled out for the same reason: the exact line
+# the injector must write, and the injected code that is proof it was needed.
+#
+# One include per file that has such code, none in a file that has not. The two
+# ways to get this wrong are opposites and neither is loud: a missing include is
+# a file that does not compile, and a leftover one is a file that pulls in
+# Types.h for nothing — or, worse, keeps compiling until somebody deletes the
+# header it names.
+#
+INJECTED_INCLUDES = {
+    '#include "ScopeTrace.h"  // inject automatically: include for trace':
+        (TRACE_MARKER,),
+    '#include "ParameterCheck.h"  // inject automatically: include for validate':
+        ("validate_params(",)
+}
 
 #
 # Two fixture trees, on purpose:
@@ -568,7 +591,9 @@ def fresh_stats():
         "files_modified": 0,
         "files_excluded": 0,
         "trace_injected": 0,
-        "trace_removed": 0
+        "trace_removed": 0,
+        "includes_added": 0,
+        "includes_removed": 0
     }
 
 
@@ -637,7 +662,7 @@ def count_injected():
 # INJECTED_MARKERS is: it has to be able to disagree with the tool.
 #
 VALIDATE_BLOCK_RE = re.compile(
-    r"static const char\* __param_names\[\] = \{ (?P<names>[^}]*) \};\n"
+    r"static const char\* __param_names\[\] = \{ (?P<names>[^}]*) \};[^\n]*\n"
     r"\s*validate_params\(\"(?P<func>[^\"]+)\", __param_names, (?P<args>[^)]*)\);"
 )
 
@@ -748,6 +773,181 @@ def check_example_configs():
     return failures
 
 
+#
+# ----------------------------------------------------------------- includes
+#
+# Injected code references ScopeTrace and validate_params, so the file it lands
+# in has to include the headers those live in. The tool adds them; the project's
+# own -I is what makes them resolve.
+#
+
+
+def check_include_consistency():
+    """
+    Per file: the include is there exactly when there is injected code needing
+    it, and never twice.
+
+    Cheap enough to assert after every scenario, which is the point — it turns
+    every inject scenario into a check that the include was added and every
+    remove scenario into a check that it was taken away again. The two failures
+    are opposites and both are quiet: without the include the file does not
+    compile, and with a leftover one it drags in a header it has no use for.
+    """
+
+    failures = []
+
+    for path in fixture_files():
+
+        text = path.read_text(encoding="utf-8")
+        name = path.relative_to(ROOT).as_posix()
+
+        for include_line, evidence in INJECTED_INCLUDES.items():
+
+            includes = text.count(include_line)
+
+            blocks = sum(
+                text.count(marker)
+                for marker in evidence
+            )
+
+            header = include_line.split('"')[1]
+
+            if blocks and includes != 1:
+                failures.append(
+                    f"{name}: {blocks} block(s) needing {header}, "
+                    f"but {includes} injected include(s) of it"
+                )
+
+            if not blocks and includes:
+                failures.append(
+                    f"{name}: {includes} injected include(s) of {header} "
+                    "with nothing left using it"
+                )
+
+    return failures
+
+
+#
+# A file the injector never touched, carrying exactly what it would have
+# written — minus the marker comment. None of it is this tool's to delete.
+#
+HAND_WRITTEN_DIR = HERE / "_hand"
+
+HAND_WRITTEN_FILE = HAND_WRITTEN_DIR / "HandRolled.cpp"
+
+HAND_WRITTEN_SOURCE = """#include "ScopeTrace.h"
+
+void HandRolled(
+    int id
+)
+{
+    ScopeTrace trace(
+        __FILE__,
+        __LINE__,
+        "HandRolled"
+    );
+
+    id++;
+}
+"""
+
+
+def check_hand_written_survives():
+    """
+    Hand-written code that happens to say ScopeTrace survives a remove, and an
+    include already in the file is not duplicated.
+
+    No other check here could notice either one: they all read
+    `ScopeTrace trace(` as proof of an injection, so a remove that deletes
+    somebody's own guard looks like a job well done. Matching on the C++ rather
+    than on the marker is exactly what this tool used to do, and the README
+    used to call it a feature.
+    """
+
+    failures = []
+
+    HAND_WRITTEN_DIR.mkdir(exist_ok=True)
+
+    HAND_WRITTEN_FILE.write_text(
+        HAND_WRITTEN_SOURCE,
+        encoding="utf-8"
+    )
+
+    rule = {
+        "directory": "test/_hand",
+        "function": ""
+    }
+
+    try:
+
+        removes = (
+            ("the whole-file remove", rule),
+            (
+                "a remove targeting the function",
+                {**rule, "function": "HandRolled"}
+            )
+        )
+
+        for what, remove_rule in removes:
+
+            apply_rule(remove_rule, "remove")
+
+            if HAND_WRITTEN_FILE.read_text(encoding="utf-8") != (
+                HAND_WRITTEN_SOURCE
+            ):
+
+                failures.append(
+                    f"{what} deleted hand-written code"
+                )
+
+                HAND_WRITTEN_FILE.write_text(
+                    HAND_WRITTEN_SOURCE,
+                    encoding="utf-8"
+                )
+
+        #
+        # The other half: injecting into that file writes its own block, but not
+        # a second copy of an include that is already there — and taking the
+        # block back out leaves the hand-written include and guard alone.
+        #
+        apply_rule(
+            {**rule, "inject_type": ["trace", "validate"]},
+            "inject"
+        )
+
+        injected = HAND_WRITTEN_FILE.read_text(encoding="utf-8")
+
+        copies = injected.count('#include "ScopeTrace.h"')
+
+        if copies != 1:
+            failures.append(
+                f"{copies} copies of an include the file already had"
+            )
+
+        if "include for validate" not in injected:
+            failures.append(
+                "wrote a validate block without including ParameterCheck.h"
+            )
+
+        apply_rule(rule, "remove")
+
+        if HAND_WRITTEN_FILE.read_text(encoding="utf-8") != (
+            HAND_WRITTEN_SOURCE
+        ):
+            failures.append(
+                "inject then remove did not restore the file"
+            )
+
+    finally:
+
+        shutil.rmtree(
+            HAND_WRITTEN_DIR,
+            ignore_errors=True
+        )
+
+    return failures
+
+
 def run_cli(config):
     """
     Drive the whole CLI over a throwaway config, the way a build step does, and
@@ -808,6 +1008,8 @@ def check_cli_round_trip(saved):
         failures.append(
             "injected nothing, so the remove below proves nothing"
         )
+
+    failures += check_include_consistency()
 
     code = run_cli(
         {
@@ -1007,6 +1209,8 @@ def check_round_trip(trip, saved):
             "inject changed nothing, so the round trip proves nothing"
         ]
 
+    failures += check_include_consistency()
+
     apply_step(trip["remove"], "remove", include_dirs)
 
     failures += diff_against(
@@ -1165,6 +1369,13 @@ def run_scenario(scenario, saved):
             f"expected warning={expected_warning}, got {warned}"
         )
 
+    #
+    # Unconditional, and no scenario has to opt in: whatever a scenario was
+    # written to measure, the state it leaves behind still has to be one the
+    # compiler would accept.
+    #
+    failures += check_include_consistency()
+
     return failures
 
 
@@ -1304,16 +1515,74 @@ def patch_validate_drops_last_argument():
     return undo
 
 
-def patch_warning_threshold():
-    """Report ordinary errors too, which fires on every already-injected file."""
+def patch_include_never_added():
+    """
+    Inject the blocks and skip the include, i.e. what this tool did until the
+    project's own `-I` became the answer to where the headers live.
 
-    from clang import cindex
+    Every count in this file still comes out right — the blocks are there, they
+    remove cleanly, the round trips restore. The files just do not compile, and
+    only check_include_consistency says so.
+    """
 
-    original = targets.MIN_REPORTED_SEVERITY
-    targets.MIN_REPORTED_SEVERITY = cindex.Diagnostic.Error
+    from trace_injector_pkg import injector
+
+    original = injector.add_includes
+
+    def unchanged(lines, kinds):
+        return lines, []
+
+    injector.add_includes = unchanged
 
     def undo():
-        targets.MIN_REPORTED_SEVERITY = original
+        injector.add_includes = original
+
+    return undo
+
+
+def patch_include_never_removed():
+    """
+    Take the blocks out and leave the include behind.
+
+    The opposite mistake and the quiet one: the file still compiles today, so
+    nothing complains until somebody deletes ScopeTrace.h — or until the leftover
+    ParameterCheck.h drags Types.h into a translation unit that stopped having
+    any use for it. The byte-exact round trips are what refuse to accept it.
+    """
+
+    from trace_injector_pkg import remover
+
+    original = remover.drop_orphan_includes
+
+    def unchanged(lines):
+        return lines, []
+
+    remover.drop_orphan_includes = unchanged
+
+    def undo():
+        remover.drop_orphan_includes = original
+
+    return undo
+
+
+def patch_report_our_own_header():
+    """
+    Report the injector's own header as a parse problem, i.e. drop the one
+    diagnostic log_parse_problems filters out.
+
+    "'ScopeTrace.h' file not found" is fatal and fires on every file this tool
+    has already been through, whenever the run does not happen to have the
+    project's `-I` for it. Passing it on tells the reader their base_class filter
+    may have matched nothing when it matched everything — and it is the only
+    diagnostic clang emits for those files, so it would be all they see.
+    """
+
+    original = targets._is_our_header
+
+    targets._is_our_header = lambda diagnostic: False
+
+    def undo():
+        targets._is_our_header = original
 
     return undo
 
@@ -1394,12 +1663,60 @@ SELF_CHECKS = [
         ]
     },
     {
-        "name": "parse warning widened past fatal",
-        "patch": patch_warning_threshold,
+        "name": "blocks injected without their include",
+        "patch": patch_include_never_added,
+        "must_fail": [
+            "same tree, relative includes, no include_dirs",
+            "validate: names match the arguments at every arity",
+            "round trip: trace only",
+            "round trip: trace + validate"
+        ],
+        #
+        # A rule that writes nothing needs no include, so these two stay green:
+        # the check is about what was written, not about what was asked for.
+        #
+        "must_pass": [
+            "separate include root, include_dirs MISSING -> warn, no writes",
+            "remove: unfiltered rule strips the whole file"
+        ]
+    },
+    {
+        "name": "include left behind after the last block went",
+        "patch": patch_include_never_removed,
+        "must_fail": [
+            "remove: unfiltered rule strips the whole file",
+            "examples: per-directory inject_type, cleaned back to nothing",
+            "round trip: trace only",
+            "round trip: trace + validate",
+            #
+            # A partial remove notices too, and that is the interesting one: the
+            # rule keeps every Run, but the files with no Run in them lose their
+            # last block, and the include is per file rather than per tree.
+            #
+            "remove: function-level exclude keeps every Run"
+        ],
+        #
+        # Inject-only scenarios cannot see this at all. "by function name only"
+        # is the other side of the per-file rule: every file holding a Run holds
+        # something else as well, so nothing there may drop its include.
+        #
+        "must_pass": [
+            "same tree, relative includes, no include_dirs",
+            "remove: by function name only"
+        ]
+    },
+    {
+        "name": "the injector's own header reported as a parse problem",
+        "patch": patch_report_our_own_header,
         "must_fail": [
             "remove: by base_class, LocalCache::Execute survives",
             "examples: base_class inject then remove leaves nothing"
         ],
+        #
+        # Both of these parse a tree nothing has been injected into yet, so
+        # there is no injected include to trip over — which is why the warning
+        # they do expect is still the one they get.
+        #
         "must_pass": [
             "separate include root, include_dirs given",
             "separate include root, include_dirs MISSING -> warn, no writes"
@@ -1498,6 +1815,11 @@ def main():
     saved = snapshot_fixtures()
 
     try:
+
+        report.record(
+            "hand-written ScopeTrace code is not ours to delete",
+            check_hand_written_survives()
+        )
 
         run_all_scenarios(saved, report=report.record)
 

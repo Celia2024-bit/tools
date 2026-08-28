@@ -3,9 +3,10 @@ Finding injected code again by reading lines, once the AST has said which
 function to look at.
 
 Nothing here knows or cares which inject_type wrote a block: a line either
-carries one of the markers in constants.INJECTION_KINDS or it does not. That is
-what lets remove restore a function to its original state without being told
-what was put there.
+carries the marker comment for one of the kinds in constants.INJECTION_KINDS or
+it does not. That is what lets remove restore a function to its original state
+without being told what was put there — and what keeps it off code the injector
+never wrote.
 """
 
 from .constants import kind_of_line
@@ -28,22 +29,21 @@ def injected_block_end(
     begin
 ):
     """
-    Index one past the injected *statement* starting at `begin`, swallowing the
-    blank line the injector leaves behind it.
+    Index one past the injected block starting at `begin`, swallowing the blank
+    line the injector leaves behind it.
 
-    Statement, not line: the ScopeTrace block spans six lines and the
-    validate_params call one, so the end is wherever the terminating `;` lands.
-    The starting line counts, which is what makes a one-line block work.
+    Every line of a block carries the marker, so the block ends where the
+    marking stops — no counting brackets, no looking for the terminating `;`.
+    That is what a per-line marker buys.
     """
 
     i = begin
 
-    while i < len(lines):
-
-        if ";" in lines[i]:
-            i += 1
-            break
-
+    while (
+        i < len(lines)
+        and
+        is_injected_line(lines[i])
+    ):
         i += 1
 
     if (

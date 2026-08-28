@@ -7,8 +7,13 @@ alike, and the function is left byte-identical to how it started. Being
 selective was the old bug — remove understood only ScopeTrace, so a
 trace+validate injection lost its trace and kept its validate, and the next
 inject wrote a second copy of the block that was still sitting there.
+
+Kind-blind is not code-blind. What comes out is what carries the injector's
+marker comment, so a hand-written ScopeTrace guard, or an #include somebody
+added themselves, survives a remove that walks right past it.
 """
 
+from .includes import drop_orphan_includes
 from .line_utils import (
     find_injected_line,
     find_open_brace_line,
@@ -81,6 +86,21 @@ def _write_back(
     logger,
     stats
 ):
+    """
+    The one place a removal is written, and therefore the one place the includes
+    are reconsidered: whichever path deleted the blocks, the include goes if and
+    only if nothing is left that needs it.
+    """
+
+    lines, dropped = drop_orphan_includes(lines)
+
+    for header in dropped:
+
+        logger.log(
+            f"   ✨ Removed include: {header}"
+        )
+
+        stats["includes_removed"] += 1
 
     cpp_file.write_text(
         "".join(lines),

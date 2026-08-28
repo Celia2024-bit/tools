@@ -119,6 +119,65 @@ different parameter lists each get their own.
 
 `remove` rules do **not** take `inject_type`. See below for why.
 
+### The `#include` it adds
+
+Injected code names `ScopeTrace` and `validate_params`, so the file it lands in
+has to include the header each of those lives in. The tool adds it:
+
+```cpp
+#include "RiskChecker.h"
+#include "ScopeTrace.h"  // inject automatically: include for trace
+#include "ParameterCheck.h"  // inject automatically: include for validate
+```
+
+There is no config key for this and no path in it. The headers are named the
+way your own sources name their own headers, and they resolve the same way —
+through your build's `-I`. Nothing here goes looking for them on disk.
+
+| Kind | Header | Lives in |
+|---|---|---|
+| `trace` | `ScopeTrace.h` | the sibling `util` repo, `ScopeTrace/` |
+| `validate` | `ParameterCheck.h` | the sibling `util` repo, `Parameter_Check/` |
+
+`ParameterCheck.h` is yours to prepare before the first `validate` run — it and
+the `CheckTraits.h` / `Types.h` it includes are hand-maintained, and this tool
+neither generates nor validates them. An earlier version generated
+`ParameterCheck.h` from a `Types.h` named in a `headers` config block; that is
+gone, and so is the block.
+
+Three rules govern the include, and each one is a bug that has to be prevented
+rather than a nicety:
+
+- **It follows what was written, never what the rule asked for.** A `validate`
+  rule meeting a function with no parameters writes no block, so it gets no
+  `ParameterCheck.h` — otherwise the rule would drag `Types.h` into translation
+  units that have no use for it.
+- **It goes after the file's last unconditional `#include`.** Last, so it lands
+  below the file's own header. Unconditional, because the final `#include` in a
+  real file is often inside `#if defined(_WIN32)`, and appending there would
+  make a header the injected code always needs depend on the platform.
+- **It survives a partial remove.** The include is file-scoped while the blocks
+  are function-scoped, so `remove` only deletes it once the last block of its
+  kind is gone from that file. A rule naming one function out of five leaves it
+  in place for the other four.
+
+An include already in the file is left alone — a second copy would compile, but
+then `remove` would have to guess which of the two is safe to delete. And an
+include with no marker comment on it is not this tool's, and is never touched.
+
+Both directions are logged per file and counted in the summary, so "which of my
+files just grew a dependency on `Types.h`" is answerable from the log:
+
+```
+⚙️ Processing: test\src\risk\RiskChecker.cpp
+   ✨ Injected: RiskChecker::CheckOrder()
+   ✨ Added include: ScopeTrace.h
+   ✨ Added include: ParameterCheck.h
+
+Includes Added : 11
+Includes Gone  : 0
+```
+
 ### `base_class`
 
 `base_class` is for the "I don't know who implements/calls this virtual
@@ -138,6 +197,21 @@ Two things to know about it:
 directory/file/function level.
 
 ### What `remove` removes
+
+**Only what this tool wrote.** Every line it injects carries a marker comment
+naming the kind that wrote it:
+
+```cpp
+    ScopeTrace trace(  // inject automatically: trace
+```
+
+That comment is the whole of what `remove` looks for. It does not recognise
+`ScopeTrace` or `validate_params` as C++ — so your own hand-written guard, even
+one spelled exactly like the injected version, is not this tool's to delete.
+
+> **Upgrading:** blocks written by a version of this tool that predates the
+> marker carry no comment, and the current `remove` cannot see them. Strip them
+> with the old version first, or delete them by hand.
 
 **A remove rule says where to clean, never what.** It has no `inject_type`, and
 that is deliberate: whatever the injector left at the top of a matched
@@ -161,10 +235,10 @@ read:
   removed from. Note this means adding a single `exclude` entry switches an
   otherwise unfiltered `remove` onto the parsing path.
 - **No filter at all** → no parsing, just a line scan that strips *every*
-  injected block in the matched files. Blunter, but it also catches blocks the
-  injector never placed (hand-written, or left over from a rule you have since
-  edited) and blocks in files clang cannot parse. The log names the kinds it
-  found instead of the function, since there is no AST to ask:
+  marked block in the matched files. Blunter, but it also catches blocks left
+  over from a rule you have since edited, and blocks in files clang cannot
+  parse. The log names the kinds it found instead of the function, since there
+  is no AST to ask:
 
 ```
 ⚙️ Processing: test\src\OrderMgr.cpp
@@ -172,10 +246,11 @@ read:
    ✨ Removed injection [trace]
 ```
 
-Adding a new injection kind does not require touching `remove`. Each kind
-declares its own line markers in `INJECTION_KINDS` (`constants.py`) alongside
-the code that writes it, and `remove` matches on those — so the two halves
-cannot drift apart.
+Adding a new injection kind does not require touching `remove`, or the include
+handling either. A kind is one entry in `INJECTION_KINDS` (`constants.py`) — its
+name, the function that writes it, the header it needs — and everything else
+reads that entry: the marker is derived from the name, so the two halves cannot
+drift apart.
 
 ### `directory` vs `include_dirs`
 
@@ -237,10 +312,16 @@ as "results are probably incomplete", not as noise.
 Only **fatal** diagnostics are echoed, which in practice means an `#include`
 clang could not resolve — precisely the failure that silently empties a
 `base_class` match. Ordinary semantic errors are not reported: the hierarchy
-still resolves through them, and one of them is guaranteed. Injected files
-do not `#include "ScopeTrace.h"` (the tool never adds it), so every rerun
-over an already-injected tree yields `unknown type name 'ScopeTrace'`.
-Echoing that would train you to ignore the warning that matters.
+still resolves through them, so echoing them would train you to ignore the
+warning that matters.
+
+One fatal is filtered out all the same: this tool's own header. Rerun over an
+already-injected tree without an `-I` covering `ScopeTrace.h` and clang says
+`'ScopeTrace.h' file not found` for every single file, which tells you nothing
+about base-class matching — the injected include sits *below* the file's own, so
+everything the hierarchy needs has already been read by the time clang gets
+there. A header of *yours* that cannot be found is still reported, and still
+reported first, because it is higher up the file.
 
 ## Known limitations
 
@@ -248,13 +329,12 @@ Echoing that would train you to ignore the warning that matters.
   defined inline in a header (`void Run() override { ... }`) is never
   touched. This bites hardest with `base_class`, since subclass overrides
   are often one-liners in headers.
-- **No `#include` is added.** Injected files reference `ScopeTrace` and
-  `validate_params` without including their headers, so they will not compile
-  until you add them (a project-wide precompiled header is the usual answer).
-  `headers` closes half of this: it makes sure `ParameterCheck.h` exists and
-  was generated for your `Types.h`. Getting each `.cpp` to *find* it is still
-  yours to arrange. The header being referenced is not this repo's to ship:
-  `ScopeTrace.h` lives in the `util` repo next to the `Logger.h` it needs.
+- **The headers have to be reachable.** The tool writes the `#include`; making
+  the name resolve is your build's job, the same `-I` your own headers already
+  rely on. Neither header ships here — both live in the sibling `util` repo,
+  and `ScopeTrace.h` needs the `Logger.h` next to it. Nothing is checked before
+  the sweep: a `validate` run against a `ParameterCheck.h` you have not prepared
+  injects happily and fails at compile time.
 
 ## Examples
 
@@ -267,8 +347,7 @@ All under `configs_examples/`:
 | `config_base_class_example.json` | every `Run()` override under `IStrategy`, no `include_dirs` needed |
 | `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required |
 | `config_base_class_remove_example.json` | the exact undo of the one above — same fields, `inject` swapped for `remove` |
-| `config_inject_types_example.json` | two directories, a different `inject_type` for each — so one tree gets
-`validate` calls and the other does not |
+| `config_inject_types_example.json` | two directories, a different `inject_type` for each — so one tree gets both includes and the other only `ScopeTrace.h` |
 | `config_inject_types_remove_example.json` | the undo of the one above — one unfiltered rule per tree, no `inject_type` needed |
 
 ## Tests
@@ -291,13 +370,30 @@ their absence — `NetworkMgr::Run` (same method name, unrelated class) and
 `LocalCache::Execute` (same method name, no base class). Two of them run the
 shipped example configs for real rather than a copy of their rules.
 
-**2. Self checks.** Breaks the tool on purpose five ways — degrade targeted
-remove to the whole-file scan, make remove blind to everything but `trace`,
-pass one argument fewer than the name table names, widen the parse warning past
-fatal, typo a `base_class` in an example config — and confirms the right
-scenarios go red and the others stay green. A green suite only means something
-if it can go red; this is what stops an assertion from quietly becoming vacuous.
+Every scenario also carries an include invariant it did not have to ask for:
+per file, the injected `#include` is present exactly when there is injected code
+needing it, and never twice. That turns each inject scenario into a check that
+the include was added and each remove scenario into a check that it was taken
+away — without any scenario hard-coding a count. Both ways of getting it wrong
+are quiet: a missing include is a file that does not compile, and a leftover one
+drags `Types.h` into a translation unit with no use for it.
+
+**2. Self checks.** Breaks the tool on purpose seven ways — degrade targeted
+remove to the whole-file scan, make remove blind to everything but `trace`, pass
+one argument fewer than the name table names, inject blocks without their
+include, leave the include behind after the last block went, report the tool's
+own header as a parse problem, typo a `base_class` in an example config — and confirms the right
+scenarios go red and the others stay green. A green suite only means something if
+it can go red; this is what stops an assertion from quietly becoming vacuous.
 Skipped when part 1 is already failing, since it asserts *which* scenarios fail.
+
+The two include breakages are opposites, and their `must_pass` lists are where
+the rule actually gets pinned down. Never adding the include leaves *"warns and
+injects nothing"* green, because a rule that wrote nothing needs nothing. Never
+removing it leaves *"`function` only → every `Run()`"* green — every file holding
+a `Run` holds something else too, so none of them may drop its include — while
+*"function-level `exclude`"* goes red, because the files with no `Run` in them
+did lose their last block.
 
 **3. Fixture audit.** The fixtures must carry no injected code of any kind
 before the run and be byte-identical to the snapshot after it, so no result is
@@ -308,6 +404,10 @@ Three checks sit outside the scenario list:
 - **A top-level config key nothing reads is rejected**, including the `headers`
   block this tool used to ship. Silence there would read as "your
   `ParameterCheck.h` is being generated" long after that stopped being true.
+- **Hand-written code that says `ScopeTrace` survives a remove**, and an include
+  the file already had is not duplicated. Nothing else here could notice: every
+  other check reads `ScopeTrace trace(` as proof of an injection, so a remove
+  that deleted somebody's own guard would look like a job well done.
 - **End to end through the CLI**, inject then remove then byte-identical again.
   Everything else calls `process_rule` directly and never reaches `cli.py`, so a
   config the CLI chokes on — or a summary line naming a stat nobody counts —

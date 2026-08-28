@@ -7,6 +7,7 @@ whatever inject can put in, remove can take back out.
 from clang import cindex
 
 from .class_hierarchy import is_or_derives_from, owning_class, qualified_name
+from .constants import injected_headers
 from .file_discovery import match_function
 
 MAX_REPORTED_DIAGNOSTICS = 3
@@ -51,6 +52,15 @@ def parse_translation_unit(
     )
 
 
+def _is_our_header(diagnostic):
+    """Is this diagnostic about a header the injector added itself?"""
+
+    return any(
+        f"'{header}'" in diagnostic.spelling
+        for header in injected_headers()
+    )
+
+
 def log_parse_problems(tu, logger):
     """
     Only worth calling when a base_class filter is active: a header clang
@@ -58,10 +68,14 @@ def log_parse_problems(tu, logger):
     silently matches nothing. A silent miss is worse than a noisy warning.
 
     Fatal only, deliberately. A missing #include is fatal; ordinary semantic
-    errors are not, and they do not stop the hierarchy from resolving. The
-    common one is "unknown type name 'ScopeTrace'" on a second run, because
-    the injector writes the trace without adding its header — reporting that
-    would train the reader to ignore the warning that matters.
+    errors are not, and they do not stop the hierarchy from resolving. Reporting
+    those would train the reader to ignore the warning that matters.
+
+    One fatal is filtered out all the same: the injector's own header, on a
+    rerun over an already-injected tree whose `-I` does not cover ScopeTrace.h
+    yet. It says nothing about base-class matching — the include is written
+    below the file's own, so everything the hierarchy needs has already been
+    read by the time clang gets there — and it would fire on every file.
     """
 
     reported = 0
@@ -69,6 +83,9 @@ def log_parse_problems(tu, logger):
     for diagnostic in tu.diagnostics:
 
         if diagnostic.severity < MIN_REPORTED_SEVERITY:
+            continue
+
+        if _is_our_header(diagnostic):
             continue
 
         if reported >= MAX_REPORTED_DIAGNOSTICS:
