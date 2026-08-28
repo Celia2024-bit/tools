@@ -1,0 +1,16 @@
+{
+    "inject": [
+        {
+            "directory": "test/src",
+            "file": "",
+            "function": "",
+            "inject_type": ["trace", "validate", "guard"]
+        },
+        {
+            "directory": "test/proj",
+            "file": "",
+            "function": "",
+            "inject_type": ["guard"]
+        }
+    ]
+}

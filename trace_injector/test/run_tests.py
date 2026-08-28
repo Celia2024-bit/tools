@@ -85,6 +85,13 @@ REMOVED_PREFIX = "   ✨ Removed: "
 INCOMPLETE_WARNING = "Base-class matching may be incomplete"
 TRACE_MARKER = "ScopeTrace trace("
 
+#
+# The one line of a guard that could not have been there before: `try` and `}`
+# are everybody's, and a leftover check keyed on those would fire on the
+# fixtures at rest.
+#
+GUARD_MARKER = "ErrorLogger::LogError("
+
 EXAMPLES_DIR = "configs_examples"
 
 #
@@ -96,8 +103,19 @@ EXAMPLES_DIR = "configs_examples"
 INJECTED_MARKERS = (
     TRACE_MARKER,
     "static const char* __param_names[]",
-    "validate_params("
+    "validate_params(",
+    GUARD_MARKER
 )
+
+#
+# Markers per block, which is not one for every kind: a validate block carries
+# the name table and the call, and a guard carries a LogError in each of its two
+# catch arms. The arithmetic below counts occurrences, not blocks, so it has to
+# say so.
+#
+VALIDATE_MARKERS_PER_BLOCK = 2
+
+GUARD_MARKERS_PER_BLOCK = 2
 
 #
 # The include each kind needs, spelled out for the same reason: the exact line
@@ -113,7 +131,14 @@ INJECTED_INCLUDES = {
     '#include "ScopeTrace.h"  // inject automatically: include for trace':
         (TRACE_MARKER,),
     '#include "ParameterCheck.h"  // inject automatically: include for validate':
-        ("validate_params(",)
+        ("validate_params(",),
+    #
+    # The guard needs one too. Its `try`/`catch` needs nothing at all, but the
+    # catch arms have to report the error somewhere, and ErrorLogger::LogError is
+    # where this project reports errors.
+    #
+    '#include "ErrorLogger.h"  // inject automatically: include for guard':
+        (GUARD_MARKER,)
 }
 
 #
@@ -148,6 +173,34 @@ INJECT_ALL_SRC_VALIDATE = {
     "inject_type": [
         "trace",
         "validate"
+    ]
+}
+
+#
+# The guard on its own, which is the interesting case for it: nothing lands at
+# the top of the body except the `try`, so a check that looks there and stops
+# finds only half of what it has to remove.
+#
+INJECT_ALL_SRC_GUARD = {
+    "directory": "test/src",
+    "function": "",
+    "inject_type": [
+        "guard"
+    ]
+}
+
+#
+# All three at once, i.e. the arrangement that has to nest: trace and validate
+# above the `try`, so the trace object outlives the catch and its destructor
+# still logs the exit.
+#
+INJECT_ALL_SRC_EVERY_KIND = {
+    "directory": "test/src",
+    "function": "",
+    "inject_type": [
+        "trace",
+        "validate",
+        "guard"
     ]
 }
 
@@ -211,13 +264,29 @@ SRC_TRACE_BLOCKS = len(ALL_SRC_FUNCTIONS) + SRC_OVERLOAD_EXTRAS
 SRC_VALIDATE_BLOCKS = len(VALIDATED_SRC_FUNCTIONS) + SRC_OVERLOAD_EXTRAS
 
 #
+# Every function can be wrapped, whether or not it has parameters and whether or
+# not its body is empty — so a guard sweep and a trace sweep write the same
+# number of blocks.
+#
+SRC_GUARD_BLOCKS = SRC_TRACE_BLOCKS
+
+#
 # One marker per trace block, two per validate block (the name table and the
 # call). What INJECT_ALL_SRC_VALIDATE leaves behind, in marker occurrences.
 #
 ALL_SRC_MARKERS_WITH_VALIDATE = (
     SRC_TRACE_BLOCKS
     +
-    2 * SRC_VALIDATE_BLOCKS
+    VALIDATE_MARKERS_PER_BLOCK * SRC_VALIDATE_BLOCKS
+)
+
+#
+# The same for INJECT_ALL_SRC_EVERY_KIND, with the guard's two catch arms on top.
+#
+ALL_SRC_MARKERS_EVERY_KIND = (
+    ALL_SRC_MARKERS_WITH_VALIDATE
+    +
+    GUARD_MARKERS_PER_BLOCK * SRC_GUARD_BLOCKS
 )
 
 EXECUTOR_OVERRIDES = {
@@ -266,6 +335,8 @@ ALL_PROJ_FUNCTIONS = EXECUTOR_OVERRIDES | {
 #   validate_blocks      how many validate blocks must be in the fixtures, each
 #                        of them read back and checked name-by-name against the
 #                        arguments it passes — see check_validate_blocks
+#   guard_blocks         how many guards must be in the fixtures, each of them
+#                        read back and checked arm by arm — see check_guard_blocks
 #   round_trip           {inject, remove} instead of the keys above: asserts
 #                        inject/remove/inject byte equality, see
 #                        check_round_trip
@@ -380,6 +451,50 @@ SCENARIOS = [
         }
     },
     #
+    # The guard, read back rather than counted — the same treatment validate
+    # gets, and for the same reason: the shape is the feature. A block of the
+    # right size with no `throw;` in it silently turns every exception in the
+    # codebase into a return.
+    #
+    # No traces left behind at all, which is the assertion worth noticing: this
+    # is the one inject that writes a block into every function and does not
+    # write a ScopeTrace anywhere.
+    #
+    {
+        "name": "guard: every body wrapped, both arms, both rethrows",
+        "rule": INJECT_ALL_SRC_GUARD,
+        "injected": ALL_SRC_FUNCTIONS,
+        "injected_count": SRC_GUARD_BLOCKS,
+        "remaining": 0,
+        "remaining_injected": (
+            GUARD_MARKERS_PER_BLOCK * SRC_GUARD_BLOCKS
+        ),
+        "guard_blocks": SRC_GUARD_BLOCKS,
+        "injected_kinds": {
+            "guard": ALL_SRC_FUNCTIONS
+        }
+    },
+    #
+    # All three kinds in one function. Nothing here that the three separate
+    # sweeps do not cover on their own — except that they land in the same body,
+    # in an order that has to hold.
+    #
+    {
+        "name": "every kind at once: three blocks, one function",
+        "rule": INJECT_ALL_SRC_EVERY_KIND,
+        "injected": ALL_SRC_FUNCTIONS,
+        "injected_count": SRC_TRACE_BLOCKS,
+        "remaining": SRC_TRACE_BLOCKS,
+        "remaining_injected": ALL_SRC_MARKERS_EVERY_KIND,
+        "validate_blocks": SRC_VALIDATE_BLOCKS,
+        "guard_blocks": SRC_GUARD_BLOCKS,
+        "injected_kinds": {
+            "trace": ALL_SRC_FUNCTIONS,
+            "validate": VALIDATED_SRC_FUNCTIONS,
+            "guard": ALL_SRC_FUNCTIONS
+        }
+    },
+    #
     # remove side: the same rule fields must take traces back out again.
     #
     {
@@ -426,6 +541,52 @@ SCENARIOS = [
         },
         "remaining": SRC_TRACE_BLOCKS - 1,
         "remaining_injected": ALL_SRC_MARKERS_WITH_VALIDATE - 3
+    },
+    #
+    # The two halves of a guard have to come out together, and the targeted path
+    # is where that is hard: it is handed one function and has to find injected
+    # code at both ends of it. Leaving the catch arms behind is a `}` too many —
+    # a file that does not compile, from a remove that reported success.
+    #
+    {
+        "name": "remove: unfiltered rule strips both halves of a guard",
+        "setup": INJECT_ALL_SRC_GUARD,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/src",
+            "function": ""
+        },
+        "setup_injected": (
+            GUARD_MARKERS_PER_BLOCK * SRC_GUARD_BLOCKS
+        ),
+        "removed": set(),
+        #
+        # One per guard, not two. A run of catch arms is the bottom of an
+        # injection already counted, and counting it again would make the whole
+        # file path disagree with both the inject and the targeted remove.
+        #
+        "removed_count": SRC_GUARD_BLOCKS,
+        "remaining": 0,
+        "remaining_injected": 0
+    },
+    {
+        "name": "remove: targeted rule strips both halves of a guard",
+        "setup": INJECT_ALL_SRC_GUARD,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/src",
+            "function": "OnData"
+        },
+        "setup_injected": (
+            GUARD_MARKERS_PER_BLOCK * SRC_GUARD_BLOCKS
+        ),
+        "removed": {
+            "OrderMgr::OnData"
+        },
+        "remaining": 0,
+        "remaining_injected": (
+            GUARD_MARKERS_PER_BLOCK * (SRC_GUARD_BLOCKS - 1)
+        )
     },
     {
         "name": "remove: by function name only",
@@ -556,6 +717,48 @@ SCENARIOS = [
         }
     },
     {
+        "name": "round trip: guard only",
+        "round_trip": {
+            "inject": INJECT_ALL_SRC_GUARD,
+            "remove": {
+                "directory": "test/src",
+                "function": ""
+            }
+        }
+    },
+    #
+    # The guard is the one kind that does not simply prepend, so byte equality
+    # after remove says something the other round trips do not: the closing half
+    # went in above the function's own brace and came back out without taking a
+    # line of the body with it.
+    #
+    {
+        "name": "round trip: every kind at once",
+        "round_trip": {
+            "inject": INJECT_ALL_SRC_EVERY_KIND,
+            "remove": {
+                "directory": "test/src",
+                "function": ""
+            }
+        }
+    },
+    {
+        "name": "round trip: guard, targeted both ways",
+        "round_trip": {
+            "inject": {
+                "directory": "test/src",
+                "function": "OnData",
+                "inject_type": [
+                    "guard"
+                ]
+            },
+            "remove": {
+                "directory": "test/src",
+                "function": "OnData"
+            }
+        }
+    },
+    {
         "name": "round trip: trace + validate, targeted both ways",
         "round_trip": {
             "inject": {
@@ -581,6 +784,36 @@ SCENARIOS = [
         "round_trip": {
             "inject": f"{EXAMPLES_DIR}/config_inject_types_example.json",
             "remove": f"{EXAMPLES_DIR}/config_inject_types_remove_example.json"
+        }
+    },
+    #
+    # The shipped guard pair: all three kinds over test/src, the guard alone over
+    # test/proj. Counted first and then round-tripped, so the example is proven
+    # as shipped rather than as a copy of its rules that can drift.
+    #
+    {
+        "name": "examples: the guard pair, cleaned back to nothing",
+        "setup_config": f"{EXAMPLES_DIR}/config_guard_example.json",
+        "config": f"{EXAMPLES_DIR}/config_guard_remove_example.json",
+        "setup_injected": (
+            ALL_SRC_MARKERS_EVERY_KIND
+            +
+            GUARD_MARKERS_PER_BLOCK * len(ALL_PROJ_FUNCTIONS)
+        ),
+        "removed": set(),
+        "removed_count": (
+            SRC_TRACE_BLOCKS
+            +
+            len(ALL_PROJ_FUNCTIONS)
+        ),
+        "remaining": 0,
+        "remaining_injected": 0
+    },
+    {
+        "name": "round trip: the shipped guard example pair",
+        "round_trip": {
+            "inject": f"{EXAMPLES_DIR}/config_guard_example.json",
+            "remove": f"{EXAMPLES_DIR}/config_guard_remove_example.json"
         }
     }
 ]
@@ -741,6 +974,147 @@ def check_validate_blocks(expected_blocks):
         failures.append(
             f"{found} validate blocks, expected {expected_blocks}"
         )
+
+    return failures
+
+
+#
+# The shape a guard's closing half has to have, spelled out line by line for the
+# same reason VALIDATE_BLOCK_RE is: it has to be able to disagree with the tool.
+#
+# `[ \t]*` and not `\s*`, deliberately — `\s` matches newlines, and a pattern
+# that can skip a line would accept a catch arm with its `throw;` missing.
+#
+# The last two lines are the placement assertion: the tail's closing brace has to
+# be followed immediately by the function's own. Insert the arms anywhere else in
+# the body and the braces still balance, the file still compiles, and everything
+# after the catch has quietly stopped being guarded.
+#
+GUARD_BLOCK_RE = re.compile(
+    r"\}[^\n]*\n"
+    r"[ \t]*catch \(const std::exception& error\)[^\n]*\n"
+    r"[ \t]*\{[^\n]*\n"
+    r'[ \t]*ErrorLogger::LogError\("(?P<cls>[^"]*)", "(?P<method>[^"]*)", '
+    r'"std::exception", error\.what\(\)\);[^\n]*\n'
+    r"[ \t]*throw;[^\n]*\n"
+    r"[ \t]*\}[^\n]*\n"
+    r"[ \t]*catch \(\.\.\.\)[^\n]*\n"
+    r"[ \t]*\{[^\n]*\n"
+    r'[ \t]*ErrorLogger::LogError\("(?P<other_cls>[^"]*)", '
+    r'"(?P<other_method>[^"]*)", "unknown", "[^"]*"\);[^\n]*\n'
+    r"[ \t]*throw;[^\n]*\n"
+    r"[ \t]*\}[^\n]*\n"
+    r"[ \t]*\}"
+)
+
+#
+# `try` alone on a line with its brace below it, i.e. the opening half.
+#
+GUARD_TRY_RE = re.compile(
+    r"^[ \t]*try\b[^\n]*\n[ \t]*\{",
+    re.MULTILINE
+)
+
+ALL_FIXTURE_FUNCTIONS = ALL_SRC_FUNCTIONS | ALL_PROJ_FUNCTIONS
+
+
+def check_guard_blocks(expected_blocks):
+    """
+    Reads back every guard in the fixtures: two catch arms, both rethrowing, both
+    naming the function they were written into, and the whole thing sitting
+    directly above the function's closing brace.
+
+    Nothing that counts blocks could notice any of it. A guard that logs and
+    *returns* instead of rethrowing is the same size, removes just as cleanly and
+    round-trips byte for byte — it has only turned every exception in the
+    codebase into a silent success, and in a function that returns a value it has
+    made falling off the end of the body a possibility, which is undefined
+    behaviour rather than a compile error.
+
+    An opening half with no closing half is counted separately: `try` and `{` are
+    ordinary C++, so a broken guard leaves behind something that looks like code
+    somebody wrote.
+    """
+
+    failures = []
+    found = 0
+    tries = 0
+
+    for path in fixture_files():
+
+        text = path.read_text(encoding="utf-8")
+        name = path.relative_to(ROOT).as_posix()
+
+        tries += len(
+            GUARD_TRY_RE.findall(text)
+        )
+
+        for match in GUARD_BLOCK_RE.finditer(text):
+
+            found += 1
+
+            if (
+                match["cls"] != match["other_cls"]
+                or
+                match["method"] != match["other_method"]
+            ):
+                failures.append(
+                    f"{name}: one guard names "
+                    f"{match['cls']}::{match['method']} in one arm and "
+                    f"{match['other_cls']}::{match['other_method']} in the other"
+                )
+                continue
+
+            label = (
+                f"{match['cls']}::{match['method']}"
+                if match["cls"]
+                else match["method"]
+            )
+
+            if label not in ALL_FIXTURE_FUNCTIONS:
+                failures.append(
+                    f"{name}: a guard reports itself as {label}(), which is not "
+                    "a function in the fixtures"
+                )
+
+    if tries != found:
+        failures.append(
+            f"{tries} injected `try` block(s) but {found} well-formed "
+            "catch arm set(s) — a guard was left open"
+        )
+
+    if found != expected_blocks:
+        failures.append(
+            f"{found} guard blocks, expected {expected_blocks}"
+        )
+
+    return failures
+
+
+def check_braces_balanced():
+    """
+    Every fixture has as many `{` as `}`.
+
+    Crude on purpose, and asserted after every scenario rather than opted into.
+    The guard is the first kind that writes below the body as well as above it,
+    so it is the first that can leave a file with an unmatched brace — and that
+    is a whole category of breakage no count of markers would ever see.
+    """
+
+    failures = []
+
+    for path in fixture_files():
+
+        text = path.read_text(encoding="utf-8")
+
+        opens = text.count("{")
+        closes = text.count("}")
+
+        if opens != closes:
+            failures.append(
+                f"{path.relative_to(ROOT).as_posix()}: {opens} '{{' against "
+                f"{closes} '}}'"
+            )
 
     return failures
 
@@ -989,7 +1363,7 @@ def check_hand_written_survives():
         # block back out leaves the hand-written include and guard alone.
         #
         apply_rule(
-            {**rule, "inject_type": ["trace", "validate"]},
+            {**rule, "inject_type": ["trace", "validate", "guard"]},
             "inject"
         )
 
@@ -1002,10 +1376,15 @@ def check_hand_written_survives():
                 f"{copies} copies of an include the file already had"
             )
 
-        if "include for validate" not in injected:
-            failures.append(
-                "wrote a validate block without including ParameterCheck.h"
-            )
+        for kind, header in (
+            ("validate", "ParameterCheck.h"),
+            ("guard", "ErrorLogger.h")
+        ):
+
+            if f"include for {kind}" not in injected:
+                failures.append(
+                    f"wrote a {kind} block without including {header}"
+                )
 
         apply_rule(rule, "remove")
 
@@ -1289,6 +1668,14 @@ def check_round_trip(trip, saved):
 
     failures += check_include_consistency()
 
+    #
+    # Mid-trip, where it can still be told apart from a bad remove: a guard that
+    # writes an opening brace and no closing one restores perfectly, because
+    # remove takes back out exactly what was put in. The file just never
+    # compiled in between.
+    #
+    failures += check_braces_balanced()
+
     apply_step(trip["remove"], "remove", include_dirs)
 
     failures += diff_against(
@@ -1462,6 +1849,12 @@ def run_scenario(scenario, saved):
             scenario["validate_blocks"]
         )
 
+    if "guard_blocks" in scenario:
+
+        failures += check_guard_blocks(
+            scenario["guard_blocks"]
+        )
+
     warned = INCOMPLETE_WARNING in logger.text
     expected_warning = scenario.get("warns", False)
 
@@ -1477,6 +1870,7 @@ def run_scenario(scenario, saved):
     # compiler would accept.
     #
     failures += check_include_consistency()
+    failures += check_braces_balanced()
 
     return failures
 
@@ -1583,7 +1977,7 @@ def patch_validate_drops_last_argument():
     def truncated(func_name, param_names):
 
         if not param_names:
-            return []
+            return [], []
 
         names = ", ".join(
             f'"{name}"'
@@ -1592,11 +1986,14 @@ def patch_validate_drops_last_argument():
 
         args = ", ".join(param_names[:-1]) or param_names[0]
 
-        return [
-            f"    static const char* __param_names[] = {{ {names} }};\n",
-            f'    validate_params("{func_name}", __param_names, {args});\n',
-            "\n"
-        ]
+        return (
+            [
+                f"    static const char* __param_names[] = {{ {names} }};\n",
+                f'    validate_params("{func_name}", __param_names, {args});\n',
+                "\n"
+            ],
+            []
+        )
 
     patched = []
 
@@ -1651,11 +2048,11 @@ def patch_claims_every_kind_asked_for():
 
         written = {
             kind
-            for kind, _ in blocks
+            for kind, _, _ in blocks
         }
 
         return blocks + [
-            (kind, [])
+            (kind, [], [])
             for kind in normalize_inject_types(inject_types)
             if kind not in written
         ]
@@ -1740,6 +2137,116 @@ def patch_report_our_own_header():
     return undo
 
 
+def patch_guard_never_closes():
+    """
+    Open the try and write no catch arms — a kind that wraps the body doing what
+    every other kind does and only prepending.
+
+    Every count in this file still comes out right: one block per function, one
+    include, remove takes it back out and both round trips restore byte for byte.
+    The files simply have an unmatched brace in them, which is why the brace check
+    runs after every scenario and mid-round-trip rather than being opted into.
+    """
+
+    from trace_injector_pkg import constants
+
+    original = constants.INJECTION_KINDS
+
+    def top_half_only(func_name, param_names):
+
+        top, _ = constants.get_try_catch_lines(func_name, param_names)
+
+        return top, []
+
+    constants.INJECTION_KINDS = tuple(
+        (kind, top_half_only if kind == "guard" else build, header)
+        for kind, build, header in original
+    )
+
+    def undo():
+        constants.INJECTION_KINDS = original
+
+    return undo
+
+
+def patch_guard_swallows_the_exception():
+    """
+    Log the error and carry on: the catch arms without their `throw;`.
+
+    A block of exactly the right size, in exactly the right place, with the right
+    include, removing cleanly and round-tripping byte for byte — and every
+    exception in the program now stops at the function it was thrown in. A
+    non-void function goes further than that: with the throw gone, the catch runs
+    off the end of the body without returning anything, which is undefined
+    behaviour and not a diagnostic.
+
+    Nothing but reading the emitted C++ back could tell. This is the self check
+    that says check_guard_blocks earns its keep.
+    """
+
+    from trace_injector_pkg import constants
+
+    original = constants.INJECTION_KINDS
+
+    def no_rethrow(func_name, param_names):
+
+        top, tail = constants.get_try_catch_lines(func_name, param_names)
+
+        return (
+            top,
+            [
+                line
+                for line in tail
+                if line.strip() != "throw;"
+            ]
+        )
+
+    constants.INJECTION_KINDS = tuple(
+        (kind, no_rethrow if kind == "guard" else build, header)
+        for kind, build, header in original
+    )
+
+    def undo():
+        constants.INJECTION_KINDS = original
+
+    return undo
+
+
+def patch_targeted_remove_only_looks_at_the_top():
+    """
+    Put the pre-guard targeted remove back: search the few lines below the
+    opening brace, take the one run found there, and stop.
+
+    That was right for as long as every kind only prepended. A guard writes its
+    catch arms above the function's own brace, well outside any window at the
+    top, so this deletes the `try {` and leaves them behind — a `}` too many, in
+    a file that no longer compiles, reported as a successful remove.
+    """
+
+    from trace_injector_pkg import line_utils, remover
+
+    original = remover.injected_runs
+
+    def top_run_only(lines, begin, end):
+
+        found = line_utils.find_injected_line(
+            lines,
+            begin - 1
+        )
+
+        if found is None:
+            return
+
+        yield found, line_utils.injected_region_end(lines, found)
+
+    remover.injected_runs = top_run_only
+
+    def undo():
+        remover.injected_runs = original
+
+    return undo
+
+
 def patch_example_base_class():
     """Typo the base_class inside the shipped example configs."""
 
@@ -1772,6 +2279,7 @@ SELF_CHECKS = [
             "remove: by base_class, LocalCache::Execute survives",
             "remove: base_class with include_dirs MISSING -> warn, no writes",
             "remove: function-level exclude keeps every Run",
+            "remove: targeted rule strips both halves of a guard",
             "examples: base_class inject then remove leaves nothing"
         ],
         "must_pass": [
@@ -1784,8 +2292,10 @@ SELF_CHECKS = [
         "must_fail": [
             "remove: unfiltered rule strips validate as well as trace",
             "remove: targeted rule strips validate as well as trace",
+            "remove: unfiltered rule strips both halves of a guard",
             "round trip: trace + validate",
             "round trip: trace + validate, targeted both ways",
+            "round trip: guard only",
             #
             # The shipped pair is in here too, now that test/src is the tree
             # asking for validate: the examples have to be covered by the same
@@ -1896,6 +2406,76 @@ SELF_CHECKS = [
         "must_pass": [
             "separate include root, include_dirs given",
             "separate include root, include_dirs MISSING -> warn, no writes"
+        ]
+    },
+    {
+        "name": "a guard opened and never closed",
+        "patch": patch_guard_never_closes,
+        "must_fail": [
+            "guard: every body wrapped, both arms, both rethrows",
+            "every kind at once: three blocks, one function",
+            #
+            # Byte equality has nothing to say here — remove takes back out
+            # exactly what was put in, whatever that was. It is the brace check
+            # mid-round-trip that refuses the state in between.
+            #
+            "round trip: guard only",
+            "round trip: every kind at once",
+            #
+            # And the setup assertions on the remove scenarios, which is what
+            # stops them going vacuous: a remove that reports "nothing left"
+            # proves nothing if the inject never wrote a guard.
+            #
+            "remove: unfiltered rule strips both halves of a guard",
+            "examples: the guard pair, cleaned back to nothing"
+        ],
+        #
+        # Every kind that only prepends is untouched, which is the point: this is
+        # a breakage the tool could not have had before a kind wrapped a body.
+        #
+        "must_pass": [
+            "round trip: trace only",
+            "round trip: trace + validate",
+            "remove: unfiltered rule strips the whole file"
+        ]
+    },
+    {
+        "name": "a guard that logs the error and swallows it",
+        "patch": patch_guard_swallows_the_exception,
+        "must_fail": [
+            "guard: every body wrapped, both arms, both rethrows",
+            "every kind at once: three blocks, one function"
+        ],
+        #
+        # Nothing else can see it, and that is the finding: the block is the
+        # right size, in the right place, with the right include, and it removes
+        # and round-trips perfectly. Only reading the C++ back notices that the
+        # program's behaviour changed.
+        #
+        "must_pass": [
+            "round trip: guard only",
+            "round trip: every kind at once",
+            "remove: unfiltered rule strips both halves of a guard",
+            "remove: targeted rule strips both halves of a guard"
+        ]
+    },
+    {
+        "name": "targeted remove looking only at the top of the body",
+        "patch": patch_targeted_remove_only_looks_at_the_top,
+        "must_fail": [
+            "remove: targeted rule strips both halves of a guard",
+            "round trip: guard, targeted both ways"
+        ],
+        #
+        # The whole-file path is untouched, and so is every kind that writes only
+        # at the top — which is exactly why this was correct code until the guard
+        # arrived.
+        #
+        "must_pass": [
+            "remove: unfiltered rule strips both halves of a guard",
+            "remove: targeted rule strips validate as well as trace",
+            "round trip: trace + validate, targeted both ways",
+            "remove: by function name only"
         ]
     },
     {
