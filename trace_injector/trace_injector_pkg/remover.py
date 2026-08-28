@@ -1,8 +1,26 @@
+"""
+Remove is kind-blind on purpose.
+
+A remove rule says *where* to clean, never *what* to clean: whatever the
+injector put at the top of a matched function comes out, trace and validate
+alike, and the function is left byte-identical to how it started. Being
+selective was the old bug — remove understood only ScopeTrace, so a
+trace+validate injection lost its trace and kept its validate, and the next
+inject wrote a second copy of the block that was still sitting there.
+"""
+
 from .line_utils import (
+    find_injected_line,
     find_open_brace_line,
-    find_trace_line,
-    trace_block_end
+    injected_kinds,
+    injected_region_end,
+    is_injected_line
 )
+#
+# The targeted path logs `Removed: Class::Method()` and nothing else — the
+# function name is the useful part there, and the format is asserted on. The
+# whole-file path has no name to give, so it names the kinds instead.
+#
 from .targets import (
     iter_target_functions,
     log_parse_problems,
@@ -21,9 +39,10 @@ def remove_trace_from_file(
 ):
     """
     With no function/base_class filter and nothing excluded, strip every
-    trace in the file — the cheap line scan, which also catches traces the
-    injector did not place. Any filter at all switches to the AST pass, which
-    removes exactly the traces the matching inject rule would have added.
+    injected block in the file — the cheap line scan, which also catches blocks
+    the injector did not place. Any filter at all switches to the AST pass,
+    which cleans exactly the functions the matching inject rule would have
+    touched.
     """
 
     if excluded_functions is None:
@@ -62,13 +81,6 @@ def _write_back(
     logger,
     stats
 ):
-
-    if not lines:
-
-        logger.log(
-            "   ✅ No changes required."
-        )
-        return
 
     cpp_file.write_text(
         "".join(lines),
@@ -123,20 +135,20 @@ def _remove_targeted(
         if brace_idx is None:
             continue
 
-        trace_idx = find_trace_line(
+        begin = find_injected_line(
             lines,
             brace_idx
         )
 
-        if trace_idx is None:
+        if begin is None:
             continue
 
         deletions.append(
             (
-                trace_idx,
-                trace_block_end(
+                begin,
+                injected_region_end(
                     lines,
-                    trace_idx
+                    begin
                 ),
                 label
             )
@@ -180,43 +192,55 @@ def _remove_all(
     logger,
     stats
 ):
+    """
+    One pass over the file, deleting each run of injected blocks whole.
+
+    Counted per run rather than per block, so a function carrying trace and
+    validate reports as the one function it is.
+    """
 
     lines = cpp_file.read_text(
         encoding="utf-8"
     ).splitlines(True)
 
-    modified = False
+    result = []
+
+    removed = 0
 
     i = 0
 
-    result = []
-
     while i < len(lines):
 
-        if "ScopeTrace trace(" in lines[i]:
+        if not is_injected_line(lines[i]):
 
-            logger.log(
-                "   ✨ Removed ScopeTrace"
+            result.append(
+                lines[i]
             )
 
-            stats["trace_removed"] += 1
-
-            modified = True
-
-            i = trace_block_end(
-                lines,
-                i
-            )
-
+            i += 1
             continue
 
-        result.append(
-            lines[i]
+        end = injected_region_end(
+            lines,
+            i
         )
 
-        i += 1
+        kinds = injected_kinds(
+            lines,
+            i,
+            end
+        )
 
-    if not modified:
+        logger.log(
+            f"   ✨ Removed injection [{', '.join(kinds)}]"
+        )
+
+        stats["trace_removed"] += 1
+        removed += 1
+
+        i = end
+
+    if not removed:
 
         logger.log(
             "   ✅ No changes required."
