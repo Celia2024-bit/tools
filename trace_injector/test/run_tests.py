@@ -1043,6 +1043,43 @@ def check_preflight():
                 f"accepted Types.h but never wrote {', '.join(missing)}"
             )
 
+        #
+        # And again, over its own output. A header rewritten with identical
+        # content still moves its mtime, and every translation unit that
+        # includes it then rebuilds -- once per run of a tool that exists to
+        # sweep a whole tree. mtime rather than content is deliberately the
+        # assertion: comparing content would pass for a rewrite, which is the
+        # thing being ruled out.
+        #
+        before = {
+            path: path.stat().st_mtime_ns
+            for path in GENERATED_HEADERS
+            if path.exists()
+        }
+
+        proceed, logger = preflight(
+            "inject",
+            validate_rules,
+            {"types_header": TYPES_HEADER}
+        )
+
+        if not proceed:
+            failures.append(
+                f"the second run over the same Types.h failed: {logger.text}"
+            )
+
+        rewritten = sorted(
+            path.name
+            for path, mtime in before.items()
+            if path.stat().st_mtime_ns != mtime
+        )
+
+        if rewritten:
+            failures.append(
+                f"an unchanged {', '.join(rewritten)} was rewritten, so every "
+                "file including it rebuilds on every run"
+            )
+
     clean_generated_headers()
 
     return failures
