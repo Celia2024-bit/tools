@@ -1,16 +1,14 @@
 {
-    "inject": [
+    "remove": [
         {
             "directory": "test/src",
             "file": "",
-            "function": "",
-            "inject_type": ["trace", "validate"]
+            "function": ""
         },
         {
             "directory": "test/proj",
             "file": "",
-            "function": "",
-            "inject_type": ["trace"]
+            "function": ""
         }
     ]
 }
