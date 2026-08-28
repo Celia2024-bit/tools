@@ -1,8 +1,9 @@
 # Trace Injector
 
-Inserts (or strips) a `ScopeTrace` guard at the top of C++ function bodies,
-driven by `config.json`. Function boundaries come from libclang's AST, not
-from regex, so overloads and multi-line signatures are handled correctly.
+Inserts (or strips) instrumentation at the top of C++ function bodies, driven
+by `config.json` — a `ScopeTrace` guard, a parameter check, or both, chosen per
+rule via `inject_type`. Function boundaries come from libclang's AST, not from
+regex, so overloads and multi-line signatures are handled correctly.
 
 ```
 python trace_injector.py --config config.json
@@ -44,8 +45,8 @@ optional `exclude` and `include_dirs` keys.
 
 ### Rule fields
 
-All four are filters, ANDed together. An empty (or absent) field means
-"no restriction on this dimension". Both modes accept all four: whatever an
+The four filters are ANDed together. An empty (or absent) field means "no
+restriction on this dimension". Both modes accept all four: whatever an
 `inject` rule can put in, the same rule under `remove` takes back out.
 
 | Field | Meaning | Empty means |
@@ -54,6 +55,46 @@ All four are filters, ANDed together. An empty (or absent) field means
 | `file` | Only `.cpp` files with this exact name | every `.cpp` found |
 | `function` | Only functions with this exact name | every function |
 | `base_class` | Only methods of a class that IS this class or derives from it, at any depth | no hierarchy filter |
+| `inject_type` | *Not* a filter — **what** to insert. `inject` only | `["trace"]` |
+
+### `inject_type`
+
+Which blocks to write into each matched function. Per rule, so different
+directories can get different treatment:
+
+```json
+"inject": [
+    { "directory": "src",       "function": "", "inject_type": ["trace"] },
+    { "directory": "src/hot",   "function": "", "inject_type": ["trace", "validate"] }
+]
+```
+
+| Value | Writes |
+|---|---|
+| `trace` | the `ScopeTrace` guard |
+| `validate` | a `__param_names[]` table and a `validate_params(...)` call |
+
+```cpp
+static const char* __param_names[] = { "account_id", "notional", "max_notional" };
+validate_params("RiskChecker::CheckLimits", __param_names, account_id, notional, max_notional);
+```
+
+Two cases where fewer parameters come out than went in:
+
+- **No parameters at all** → no block. There is nothing to check, and
+  `const char* __param_names[] = {}` does not compile. So a rule can name
+  `validate` and legitimately produce no validate blocks whatsoever; check the
+  log rather than assuming.
+- **A parameter with no name** (`void Snapshot(int account_id, double* out, int)`)
+  → skipped, and the rest of the block is written as normal. An unnamed
+  parameter cannot be referred to, so there is nothing to pass; the table and
+  the argument list stay consistent with each other, just shorter than the
+  signature.
+
+Overloads are handled per definition, not per name: two overloads with
+different parameter lists each get their own.
+
+`remove` rules do **not** take `inject_type`. See below for why.
 
 `base_class` is for the "I don't know who implements/calls this virtual
 function" case: name the base class and the tool finds every override down
@@ -73,18 +114,43 @@ directory/file/function level.
 
 ### What `remove` removes
 
-`remove` mirrors `inject`, with one deliberate asymmetry:
+**A remove rule says where to clean, never what.** It has no `inject_type`, and
+that is deliberate: whatever the injector left at the top of a matched
+function comes out — trace, validate, both — and the function is left
+byte-identical to how it started.
+
+Being selective was a bug, not a feature. A remove that understood only
+`ScopeTrace` left the validate block of a `["trace", "validate"]` injection
+sitting in place. Nothing then reported the file as dirty, so the next `inject`
+saw no trace, wrote a fresh block above the orphan, and the file ended up with
+two `__param_names` declarations in one scope and no longer compiled.
+
+Beyond that, `remove` mirrors `inject`, with one deliberate asymmetry — the
+filters decide the *scope*, and their presence also decides *how* the file is
+read:
 
 - **Any filter present** (`function`, `base_class`, or a matching `exclude`)
-  → the file is parsed and only the traces sitting at the top of the
-  selected functions are deleted. Same selection pass as `inject`, so the
-  same rule takes back out exactly what it put in, and the log names each
-  function it removed from.
+  → the file is parsed and only the blocks sitting at the top of the selected
+  functions are deleted. Same selection pass as `inject`, so the same rule
+  takes back out exactly what it put in, and the log names each function it
+  removed from. Note this means adding a single `exclude` entry switches an
+  otherwise unfiltered `remove` onto the parsing path.
 - **No filter at all** → no parsing, just a line scan that strips *every*
-  `ScopeTrace` in the matched files. Slightly blunter, but it also catches
-  traces the injector never placed (hand-written, or left over from a rule
-  you have since edited). The log cannot name the function in this case,
-  since there is no AST to ask.
+  injected block in the matched files. Blunter, but it also catches blocks the
+  injector never placed (hand-written, or left over from a rule you have since
+  edited) and blocks in files clang cannot parse. The log names the kinds it
+  found instead of the function, since there is no AST to ask:
+
+```
+⚙️ Processing: test\src\OrderMgr.cpp
+   ✨ Removed injection [trace, validate]
+   ✨ Removed injection [trace]
+```
+
+Adding a new injection kind does not require touching `remove`. Each kind
+declares its own line markers in `INJECTION_KINDS` (`constants.py`) alongside
+the code that writes it, and `remove` matches on those — so the two halves
+cannot drift apart.
 
 ### `directory` vs `include_dirs`
 
@@ -157,9 +223,10 @@ Echoing that would train you to ignore the warning that matters.
   defined inline in a header (`void Run() override { ... }`) is never
   touched. This bites hardest with `base_class`, since subclass overrides
   are often one-liners in headers.
-- **The `ScopeTrace` include is not added.** Injected files reference
-  `ScopeTrace` without including its header, so they will not compile until
-  you add it (a project-wide precompiled header is the usual answer).
+- **No `#include` is added.** Injected files reference `ScopeTrace` and
+  `validate_params` without including their headers, so they will not compile
+  until you add them (a project-wide precompiled header is the usual answer).
+  The `headers` key some configs carry is not read by anything yet.
 
 ## Examples
 
@@ -170,6 +237,8 @@ Echoing that would train you to ignore the warning that matters.
 | `config_base_class_example.json` | every `Run()` override under `IStrategy`, no `include_dirs` needed |
 | `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required |
 | `config_base_class_remove_example.json` | the exact undo of the one above — same fields, `inject` swapped for `remove` |
+| `config_inject_types_example.json` | two directories, a different `inject_type` for each |
+| `config_inject_types_remove_example.json` | the undo of the one above — one unfiltered rule per tree, no `inject_type` needed |
 
 ## Tests
 
@@ -190,16 +259,17 @@ their absence — `NetworkMgr::Run` (same method name, unrelated class) and
 `LocalCache::Execute` (same method name, no base class). Two of them run the
 shipped example configs for real rather than a copy of their rules.
 
-**2. Self checks.** Breaks the tool on purpose three ways — degrade targeted
-remove to the whole-file scan, widen the parse warning past fatal, typo a
-`base_class` in an example config — and confirms the right scenarios go red
-and the others stay green. A green suite only means something if it can go
-red; this is what stops an assertion from quietly becoming vacuous. Skipped
-when part 1 is already failing, since it asserts *which* scenarios fail.
+**2. Self checks.** Breaks the tool on purpose five ways — degrade targeted
+remove to the whole-file scan, make remove blind to everything but `trace`,
+pass one argument fewer than the name table names, widen the parse warning past
+fatal, typo a `base_class` in an example config — and confirms the right
+scenarios go red and the others stay green. A green suite only means something
+if it can go red; this is what stops an assertion from quietly becoming vacuous.
+Skipped when part 1 is already failing, since it asserts *which* scenarios fail.
 
-**3. Fixture audit.** The fixtures must be trace-free before the run and
-byte-identical to the snapshot after it, so no result is measuring debris
-left by the previous run.
+**3. Fixture audit.** The fixtures must carry no injected code of any kind
+before the run and be byte-identical to the snapshot after it, so no result is
+measuring debris left by the previous run.
 
 Inject scenarios:
 
@@ -210,16 +280,40 @@ Inject scenarios:
 - `base_class` with an empty `function` → every method in the hierarchy
 - labels stay fully qualified with no `base_class` filter in play
 - free functions: namespace qualified, bare at file scope
+- `validate` names match the arguments at every arity
+
+That last one is the only scenario that reads the injected code instead of
+counting it: for every validate block in the fixtures, the quoted names and the
+arguments passed have to be the same identifiers in the same order. Counts
+cannot see that distinction, which is why `test/src/risk/RiskChecker.cpp` exists
+— three- and four-parameter methods, an overload pair whose two definitions
+must not share a parameter list, a parameter with no name, and one method with
+no parameters at all.
 
 Remove scenarios (each injects first, then removes, and asserts how many
-traces are left behind):
+blocks are left behind — counted per kind, so validate debris a trace count
+walks past still fails the assertion):
 
 - unfiltered rule strips the whole file, unnamed
+- unfiltered rule strips `validate` as well as `trace`
+- targeted rule strips `validate` as well as `trace`
 - `function` only → every `Run()`, nothing else
 - `base_class` → the overrides only, `LocalCache::Execute` survives
 - `base_class` with `include_dirs` missing → warns, removes nothing
 - function-level `exclude` → everything except the excluded `Run()`s
 - the two `base_class` example configs round-trip to zero traces
+- the two `inject_types` example configs clean both fixture trees
+
+Round trips assert byte equality rather than counts, in both directions:
+
+```
+inject -> remove            == the original file, byte for byte
+inject -> remove -> inject  == what the first inject produced
+```
+
+The second is the one that earns its keep. A remove that leaves one block of a
+two-block injection behind passes every count-based check; only re-injecting
+and comparing catches the duplicate it causes.
 
 Plus a guard that every shipped `config_*example*.json` still passes
 validation.
