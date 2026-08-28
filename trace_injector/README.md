@@ -31,13 +31,14 @@ TRACE_INJECTOR_LIBCLANG=/opt/llvm/lib/libclang.so python trace_injector.py --con
 ```
 
 Log lines name each function by its fully qualified name, so overrides that
-share a method name stay distinguishable:
+share a method name stay distinguishable, and end with the kinds actually
+written into it:
 
 ```
-✨ Injected: StrategyEngine::Run()
-✨ Injected: AlphaStrategy::Run()
-✨ Injected: util::Reset()          free function, namespace only
-✨ Injected: Normalize()            free function at file scope
+✨ Injected: StrategyEngine::Run() [trace]
+✨ Injected: AlphaStrategy::Run() [trace]
+✨ Injected: util::Reset() [trace]              free function, namespace only
+✨ Injected: Normalize() [trace, validate]      free function at file scope
 ```
 
 ## Config
@@ -105,17 +106,37 @@ validate_params("RiskChecker::CheckLimits", __param_names, account_id, notional,
 Two cases where fewer parameters come out than went in:
 
 - **No parameters at all** → no block. There is nothing to check, and
-  `const char* __param_names[] = {}` does not compile. So a rule can name
-  `validate` and legitimately produce no validate blocks whatsoever; check the
-  log rather than assuming.
+  `const char* __param_names[] = {}` does not compile.
 - **A parameter with no name** (`void Snapshot(int account_id, double* out, int)`)
   → skipped, and the rest of the block is written as normal. An unnamed
   parameter cannot be referred to, so there is nothing to pass; the table and
   the argument list stay consistent with each other, just shorter than the
   signature.
 
+**Expect most functions to get no validate block.** `void Run()`, `Stop()`,
+`OnTick()` — the no-argument methods that make up the bulk of most code — take
+nothing, so they get a trace and nothing else. A `["trace", "validate"]` rule
+producing validate blocks in three files out of eight is the normal result, not
+a broken one. The log says which kinds each function got, so read it rather than
+grepping the tree and guessing:
+
+```
+⚙️ Processing: test\src\OrderMgr.cpp
+   ✨ Injected: OrderMgr::SubmitOrder() [trace, validate]
+   ✨ Injected: OrderMgr::OnConnected() [trace]
+   ✨ Added include: ScopeTrace.h
+   ✨ Added include: ParameterCheck.h
+
+⚙️ Processing: test\src\market\MarketData.cpp
+   ✨ Injected: MarketData::OnTick() [trace]
+   ✨ Added include: ScopeTrace.h
+```
+
+`MarketData.cpp` has no `ParameterCheck.h` because nothing in it needed one.
+
 Overloads are handled per definition, not per name: two overloads with
-different parameter lists each get their own.
+different parameter lists each get their own — so `RiskChecker::Margin` appears
+twice in the log, once per definition.
 
 `remove` rules do **not** take `inject_type`. See below for why.
 
@@ -378,14 +399,20 @@ away — without any scenario hard-coding a count. Both ways of getting it wrong
 are quiet: a missing include is a file that does not compile, and a leftover one
 drags `Types.h` into a translation unit with no use for it.
 
-**2. Self checks.** Breaks the tool on purpose seven ways — degrade targeted
+**2. Self checks.** Breaks the tool on purpose eight ways — degrade targeted
 remove to the whole-file scan, make remove blind to everything but `trace`, pass
-one argument fewer than the name table names, inject blocks without their
-include, leave the include behind after the last block went, report the tool's
-own header as a parse problem, typo a `base_class` in an example config — and confirms the right
+one argument fewer than the name table names, claim every kind the rule asked for
+whether or not it wrote anything, inject blocks without their include, leave the
+include behind after the last block went, report the tool's own header as a parse
+problem, typo a `base_class` in an example config — and confirms the right
 scenarios go red and the others stay green. A green suite only means something if
 it can go red; this is what stops an assertion from quietly becoming vacuous.
 Skipped when part 1 is already failing, since it asserts *which* scenarios fail.
+
+The claim-every-kind one changes no file at all: counts, byte equality, both
+round trips stay green. What goes red is the log — which functions it says got a
+validate block — and the include, since both are meant to follow *what was
+written* rather than what was asked for. That the two fail together is the point.
 
 The two include breakages are opposites, and their `must_pass` lists are where
 the rule actually gets pinned down. Never adding the include leaves *"warns and
@@ -432,6 +459,12 @@ cannot see that distinction, which is why `test/src/risk/RiskChecker.cpp` exists
 — three- and four-parameter methods, an overload pair whose two definitions
 must not share a parameter list, a parameter with no name, and one method with
 no parameters at all.
+
+It also pins down the mapping the log reports: `trace` for all 21 functions,
+`validate` for exactly the 8 that take parameters. Asserted against the log
+rather than the files, because the log is what a reader judges the run by — and
+with 13 of 21 taking no arguments, "validate did nothing" is what a *correct* run
+looks like unless the log says otherwise.
 
 Remove scenarios (each injects first, then removes, and asserts how many
 blocks are left behind — counted per kind, so validate debris a trace count

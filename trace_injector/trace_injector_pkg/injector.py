@@ -92,8 +92,14 @@ def inject_trace_into_file(
         for entry in reversed(lines_to_inject):
             lines.insert(insert_idx, entry)
 
+        #
+        # The kinds, not just the name. A rule asking for validate writes no
+        # validate block into a function with no parameters, and that is most
+        # functions in most code — so a log that only names the function reads
+        # as "validate did nothing at all" when it did exactly what it should.
+        #
         logger.log(
-            f"   ✨ Injected: {label}()"
+            f"   ✨ Injected: {label}() [{', '.join(kinds)}]"
         )
 
         stats["trace_injected"] += 1

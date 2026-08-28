@@ -259,6 +259,10 @@ ALL_PROJ_FUNCTIONS = EXECUTOR_OVERRIDES | {
 #   remaining_injected   injected marker occurrences of ANY kind left behind,
 #                        which is what catches validate debris a trace count
 #                        walks straight past
+#   injected_kinds       {kind: expected labels} read out of the inject log, so
+#                        "which functions actually got a validate block" is
+#                        asserted and not just counted. Exhaustive: a kind in
+#                        the log that is not a key here fails
 #   validate_blocks      how many validate blocks must be in the fixtures, each
 #                        of them read back and checked name-by-name against the
 #                        arguments it passes — see check_validate_blocks
@@ -362,7 +366,18 @@ SCENARIOS = [
         "injected_count": SRC_TRACE_BLOCKS,
         "remaining": SRC_TRACE_BLOCKS,
         "remaining_injected": ALL_SRC_MARKERS_WITH_VALIDATE,
-        "validate_blocks": SRC_VALIDATE_BLOCKS
+        "validate_blocks": SRC_VALIDATE_BLOCKS,
+        #
+        # Every function gets a trace; only the ones with parameters get a
+        # validate. Asserted against the log rather than the files, because the
+        # log is what a reader judges the run by — and 13 of these 21 functions
+        # take no parameters, so "validate did nothing" is what a correct run
+        # looks like unless the log says otherwise.
+        #
+        "injected_kinds": {
+            "trace": ALL_SRC_FUNCTIONS,
+            "validate": VALIDATED_SRC_FUNCTIONS
+        }
     },
     #
     # remove side: the same rule fields must take traces back out again.
@@ -730,13 +745,76 @@ def check_validate_blocks(expected_blocks):
     return failures
 
 
+#
+# `Class::Method()`, optionally followed by the kinds that were written:
+# `Class::Method() [trace, validate]`. Remove has no kinds to report on the
+# targeted path, so the suffix is optional rather than two separate patterns.
+#
+LOG_LABEL_RE = re.compile(
+    r"^(?P<label>.+?)\(\)(?: \[(?P<kinds>[^\]]*)\])?$"
+)
+
+
+def _parse_log_line(line, prefix):
+    """(label, [kinds]) for a log line with this prefix, or None."""
+
+    if not line.startswith(prefix):
+        return None
+
+    match = LOG_LABEL_RE.match(
+        line[len(prefix):]
+    )
+
+    if not match:
+        return None
+
+    kinds = [
+        kind.strip()
+        for kind in (match["kinds"] or "").split(",")
+        if kind.strip()
+    ]
+
+    return match["label"], kinds
+
+
 def labels_with_prefix(logger, prefix):
 
     return {
-        line[len(prefix):].removesuffix("()")
-        for line in logger.lines
-        if line.startswith(prefix)
+        parsed[0]
+        for parsed in (
+            _parse_log_line(line, prefix)
+            for line in logger.lines
+        )
+        if parsed
     }
+
+
+def labels_by_kind(logger):
+    """
+    Which functions the inject log says received each kind.
+
+    The log is the only place this is visible per function, and it is the thing
+    a reader actually judges the run by: "validate" writes nothing into a
+    function with no parameters, which is most functions in most code, so a run
+    that behaved perfectly looks like one where validate never fired. Asserting
+    the mapping is what stops the log from being reassuring and wrong.
+    """
+
+    by_kind = {}
+
+    for line in logger.lines:
+
+        parsed = _parse_log_line(line, INJECTED_PREFIX)
+
+        if not parsed:
+            continue
+
+        label, kinds = parsed
+
+        for kind in kinds:
+            by_kind.setdefault(kind, set()).add(label)
+
+    return by_kind
 
 
 def check_example_configs():
@@ -1354,6 +1432,30 @@ def run_scenario(scenario, saved):
                 f"expected {scenario[key]}"
             )
 
+    if "injected_kinds" in scenario:
+
+        actual_kinds = labels_by_kind(logger)
+
+        for kind, expected in scenario["injected_kinds"].items():
+
+            got = actual_kinds.get(kind, set())
+
+            if got != expected:
+
+                failures.append(
+                    f"the log reports {kind} for the wrong functions\n"
+                    f"      missing: {sorted(expected - got) or '-'}\n"
+                    f"      extra  : {sorted(got - expected) or '-'}"
+                )
+
+        unexpected = set(actual_kinds) - set(scenario["injected_kinds"])
+
+        if unexpected:
+
+            failures.append(
+                f"the log reports kinds nobody asked about: {sorted(unexpected)}"
+            )
+
     if "validate_blocks" in scenario:
 
         failures += check_validate_blocks(
@@ -1515,6 +1617,57 @@ def patch_validate_drops_last_argument():
     return undo
 
 
+def patch_claims_every_kind_asked_for():
+    """
+    Report every kind the rule asked for, whether or not a block was written —
+    an empty block for the ones that produced nothing.
+
+    Not one line of any file changes, so every count stays right and both round
+    trips still restore byte for byte. Two things notice, and they are the two
+    that are supposed to follow "what was written" rather than "what was asked
+    for": the log, which now claims a validate block that is not there, and the
+    include, which now pulls ParameterCheck.h into files with no use for it.
+
+    That both go red together is the point. A reader who trusts the log goes
+    hunting for a bug in their ParameterCheck.h when the real answer is that
+    their function has no parameters.
+    """
+
+    from trace_injector_pkg import injector
+    from trace_injector_pkg.constants import normalize_inject_types
+
+    original = injector.build_injected_blocks
+
+    def padded(func_name, param_names, inject_types=None):
+
+        blocks = original(
+            func_name,
+            param_names,
+            inject_types
+        )
+
+        if not blocks:
+            return blocks
+
+        written = {
+            kind
+            for kind, _ in blocks
+        }
+
+        return blocks + [
+            (kind, [])
+            for kind in normalize_inject_types(inject_types)
+            if kind not in written
+        ]
+
+    injector.build_injected_blocks = padded
+
+    def undo():
+        injector.build_injected_blocks = original
+
+    return undo
+
+
 def patch_include_never_added():
     """
     Inject the blocks and skip the include, i.e. what this tool did until the
@@ -1660,6 +1813,29 @@ SELF_CHECKS = [
             "remove: unfiltered rule strips validate as well as trace",
             "remove: targeted rule strips validate as well as trace",
             "round trip: trace + validate"
+        ]
+    },
+    {
+        "name": "every kind claimed, whether or not it wrote anything",
+        "patch": patch_claims_every_kind_asked_for,
+        "must_fail": [
+            "validate: names match the arguments at every arity",
+            #
+            # Not on byte equality — remove still restores the file exactly,
+            # since an include with nothing left using it goes either way. It is
+            # the include invariant mid-round-trip that catches this.
+            #
+            "round trip: trace + validate"
+        ],
+        #
+        # A trace-only rule asks for exactly what it writes, so there is nothing
+        # to inflate. And remove is judged by what is in the file, never by what
+        # the inject log claimed.
+        #
+        "must_pass": [
+            "same tree, relative includes, no include_dirs",
+            "round trip: trace only",
+            "remove: unfiltered rule strips validate as well as trace"
         ]
     },
     {
