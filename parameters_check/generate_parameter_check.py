@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import argparse
 import sys
 import re
 import os
@@ -54,7 +55,7 @@ def check_types_header(types_path: Path) -> bool:
 
     return passed
 
-def generate_and_deploy(types_path: Path, output_dir: Path) -> bool:
+def generate_and_deploy(types_path: Path, output_dir: Path, force: bool = False) -> bool:
     """
     Validates target Types.h, deploys CheckTraits.h to Types.h directory,
     and renders ParameterCheck.h in output_dir. Returns True on success.
@@ -64,6 +65,10 @@ def generate_and_deploy(types_path: Path, output_dir: Path) -> bool:
     into the target project's include directory, and it happened BEFORE
     Types.h was validated. A rejected run therefore still left a file behind
     in a tree it had just refused to generate for.
+
+    force=True reports the validation failure and generates anyway, leaving
+    the rejection to the compile-time static_assert. See __main__ for when
+    that is the point rather than a workaround.
     """
     script_dir = Path(__file__).parent
     templates_dir = script_dir / "templates"
@@ -73,12 +78,23 @@ def generate_and_deploy(types_path: Path, output_dir: Path) -> bool:
     # Step 1: Validate Types.h, before anything is written anywhere
     print(f"--> Validating {types_path}...")
 
-    if not check_types_header(types_path):
-        print("\n[Build Stopped] Types validation failed. Generation aborted.")
-        print("Nothing was written.")
+    if not types_path.exists():
+        # --force cannot cover this one. Without the file there is nothing to
+        # compute an include path to, so there is nothing to generate either.
+        print(f"[Error] Target Types header not found at: {types_path}")
+        print("\n[Build Stopped] Generation aborted. Nothing was written.")
         return False
 
-    print("--> Types validation passed.")
+    if check_types_header(types_path):
+        print("--> Types validation passed.")
+    elif force:
+        print("--> Types validation FAILED, generating anyway (--force).")
+        print("    The compiler is expected to reject the result via static_assert.")
+    else:
+        print("\n[Build Stopped] Types validation failed. Generation aborted.")
+        print("Nothing was written. Pass --force to generate regardless and let")
+        print("the compile-time static_assert do the rejecting instead.")
+        return False
 
     # Step 2: Check template availability, still read-only
     if not j2_template_path.exists():
@@ -122,11 +138,32 @@ def generate_and_deploy(types_path: Path, output_dir: Path) -> bool:
     return True
 
 if __name__ == "__main__":
-    # Command CLI parameters:
-    #   sys.argv[1]: Path to input Types.h
-    #   sys.argv[2]: Target output directory for ParameterCheck.h
-    input_types_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("src/Types.h")
-    output_destination_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("include")
+    parser = argparse.ArgumentParser(
+        description="Generate ParameterCheck.h for a project's Types.h."
+    )
+    parser.add_argument(
+        "types_header", nargs="?", default="src/Types.h",
+        help="Path to the input Types.h (default: src/Types.h)"
+    )
+    parser.add_argument(
+        "output_dir", nargs="?", default="include",
+        help="Directory to write ParameterCheck.h into (default: include)"
+    )
+    #
+    # --force is not an escape hatch for unprepared types: it moves the same
+    # failure to the compiler, with a longer error message. It exists so the
+    # static_assert can be exercised on purpose, which is how the invalid
+    # fixture is tested.
+    #
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Generate even if validation fails, leaving the rejection to the "
+             "compile-time static_assert"
+    )
+    args = parser.parse_args()
+
+    input_types_path = Path(args.types_header)
+    output_destination_dir = Path(args.output_dir)
 
     #
     # The exit code lives here rather than inside generate_and_deploy, which
@@ -134,5 +171,7 @@ if __name__ == "__main__":
     # should get a return value, not have its own process killed.
     #
     sys.exit(
-        0 if generate_and_deploy(input_types_path, output_destination_dir) else 1
+        0 if generate_and_deploy(
+            input_types_path, output_destination_dir, force=args.force
+        ) else 1
     )
