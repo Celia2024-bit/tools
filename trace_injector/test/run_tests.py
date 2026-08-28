@@ -36,6 +36,7 @@ If libclang cannot be found automatically, point at it:
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -135,6 +136,20 @@ REMOVED_PREFIX = "   ✨ Removed: "
 INCOMPLETE_WARNING = "Base-class matching may be incomplete"
 TRACE_MARKER = "ScopeTrace trace("
 
+EXAMPLES_DIR = "configs_examples"
+
+#
+# Spelled out here rather than imported from the package on purpose. The
+# leftover checks are meant to be an independent opinion about what the
+# injector writes; importing the tool's own marker list would make them agree
+# with the bug instead of catching it.
+#
+INJECTED_MARKERS = (
+    TRACE_MARKER,
+    "static const char* __param_names[]",
+    "validate_params("
+)
+
 #
 # Two fixture trees, on purpose:
 #
@@ -157,6 +172,20 @@ INJECT_ALL_PROJ = {
 }
 
 #
+# Same sweep, but asking for both kinds. Only the functions that take
+# parameters get a validate block, which is what makes it a real test of
+# kind-blind removal: most functions carry one block, a few carry two.
+#
+INJECT_ALL_SRC_VALIDATE = {
+    "directory": "test/src",
+    "function": "",
+    "inject_type": [
+        "trace",
+        "validate"
+    ]
+}
+
+#
 # Every function defined under test/src, i.e. what INJECT_ALL_SRC produces.
 #
 ALL_SRC_FUNCTIONS = {
@@ -175,7 +204,12 @@ ALL_SRC_FUNCTIONS = {
     "AlphaStrategy::Evaluate",
     "AlphaStrategy::Rebalance",
     "Normalize",
-    "util::Reset"
+    "util::Reset",
+    "RiskChecker::CheckOrder",
+    "RiskChecker::CheckLimits",
+    "RiskChecker::Margin",
+    "RiskChecker::Snapshot",
+    "RiskChecker::ResetCounters"
 }
 
 ALL_RUNS = {
@@ -184,10 +218,55 @@ ALL_RUNS = {
     "AlphaStrategy::Run"
 }
 
+#
+# The functions under test/src that take parameters, i.e. the only ones a
+# "validate" inject writes a second block into. RiskChecker::Snapshot qualifies
+# on two of its three parameters — the third has no name.
+#
+VALIDATED_SRC_FUNCTIONS = {
+    "OrderMgr::OnData",
+    "OrderMgr::SubmitOrder",
+    "Normalize",
+    "RiskChecker::CheckOrder",
+    "RiskChecker::CheckLimits",
+    "RiskChecker::Margin",
+    "RiskChecker::Snapshot"
+}
+
+#
+# The same two things counted in blocks rather than in names, because the two
+# numbers genuinely differ: RiskChecker::Margin is overloaded, so two separate
+# definitions share one qualified name. A set of log labels collapses them; the
+# stats counter and the file contents do not.
+#
+SRC_OVERLOAD_EXTRAS = 1                 # the second RiskChecker::Margin
+
+SRC_TRACE_BLOCKS = len(ALL_SRC_FUNCTIONS) + SRC_OVERLOAD_EXTRAS
+SRC_VALIDATE_BLOCKS = len(VALIDATED_SRC_FUNCTIONS) + SRC_OVERLOAD_EXTRAS
+
+#
+# One marker per trace block, two per validate block (the name table and the
+# call). What INJECT_ALL_SRC_VALIDATE leaves behind, in marker occurrences.
+#
+ALL_SRC_MARKERS_WITH_VALIDATE = (
+    SRC_TRACE_BLOCKS
+    +
+    2 * SRC_VALIDATE_BLOCKS
+)
+
 EXECUTOR_OVERRIDES = {
     "OrderExecutor::Execute",
     "SlowExecutor::Execute",
     "FastExecutor::Execute"
+}
+
+#
+# Every function defined under test/proj. LocalCache::Execute has the method
+# name but no base class, which is what makes it useful in the base_class
+# scenarios and why it has to be added back for an unfiltered sweep.
+#
+ALL_PROJ_FUNCTIONS = EXECUTOR_OVERRIDES | {
+    "LocalCache::Execute"
 }
 
 #
@@ -202,11 +281,24 @@ EXECUTOR_OVERRIDES = {
 #   setup                a rule injected first, to give remove something to do
 #   setup_config         same, but from a shipped config file
 #   setup_include_dirs   clang -I paths for `setup`
+#   setup_injected       injected markers the setup must have planted, checked
+#                        before the rule under test runs — a remove scenario
+#                        asserting "nothing left" passes just as well when the
+#                        setup put nothing there
 #   injected / removed   the EXACT set of qualified names expected in the log
 #   injected_count /
 #   removed_count        override the stat check, for paths that cannot name
 #                        the function they touched
 #   remaining            traces left in the fixtures afterwards
+#   remaining_injected   injected marker occurrences of ANY kind left behind,
+#                        which is what catches validate debris a trace count
+#                        walks straight past
+#   validate_blocks      how many validate blocks must be in the fixtures, each
+#                        of them read back and checked name-by-name against the
+#                        arguments it passes — see check_validate_blocks
+#   round_trip           {inject, remove} instead of the keys above: asserts
+#                        inject/remove/inject byte equality, see
+#                        check_round_trip
 #   warns                whether the incomplete-match warning must appear
 #
 SCENARIOS = [
@@ -292,6 +384,21 @@ SCENARIOS = [
         }
     },
     #
+    # The one scenario that reads the injected code rather than counting it.
+    # RiskChecker supplies the arities the rest of the tree does not: three and
+    # four parameters, an overload pair that must not share a parameter list, a
+    # parameter with no name, and a method with none at all.
+    #
+    {
+        "name": "validate: names match the arguments at every arity",
+        "rule": INJECT_ALL_SRC_VALIDATE,
+        "injected": ALL_SRC_FUNCTIONS,
+        "injected_count": SRC_TRACE_BLOCKS,
+        "remaining": SRC_TRACE_BLOCKS,
+        "remaining_injected": ALL_SRC_MARKERS_WITH_VALIDATE,
+        "validate_blocks": SRC_VALIDATE_BLOCKS
+    },
+    #
     # remove side: the same rule fields must take traces back out again.
     #
     {
@@ -303,8 +410,41 @@ SCENARIOS = [
             "function": ""
         },
         "removed": set(),
-        "removed_count": len(ALL_SRC_FUNCTIONS),
-        "remaining": 0
+        "removed_count": SRC_TRACE_BLOCKS,
+        "remaining": 0,
+        "remaining_injected": 0
+    },
+    #
+    # A remove rule says where to clean, never what: it must take out whatever
+    # inject_type happened to put the block there. Counted per region, not per
+    # block, so a function carrying both kinds still reports as one.
+    #
+    {
+        "name": "remove: unfiltered rule strips validate as well as trace",
+        "setup": INJECT_ALL_SRC_VALIDATE,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/src",
+            "function": ""
+        },
+        "removed": set(),
+        "removed_count": SRC_TRACE_BLOCKS,
+        "remaining": 0,
+        "remaining_injected": 0
+    },
+    {
+        "name": "remove: targeted rule strips validate as well as trace",
+        "setup": INJECT_ALL_SRC_VALIDATE,
+        "mode": "remove",
+        "rule": {
+            "directory": "test/src",
+            "function": "OnData"
+        },
+        "removed": {
+            "OrderMgr::OnData"
+        },
+        "remaining": SRC_TRACE_BLOCKS - 1,
+        "remaining_injected": ALL_SRC_MARKERS_WITH_VALIDATE - 3
     },
     {
         "name": "remove: by function name only",
@@ -315,7 +455,7 @@ SCENARIOS = [
             "function": "Run"
         },
         "removed": ALL_RUNS,
-        "remaining": len(ALL_SRC_FUNCTIONS) - len(ALL_RUNS)
+        "remaining": SRC_TRACE_BLOCKS - len(ALL_RUNS)
     },
     {
         "name": "remove: by base_class, LocalCache::Execute survives",
@@ -358,8 +498,8 @@ SCENARIOS = [
     #
     {
         "name": "examples: base_class inject then remove leaves nothing",
-        "setup_config": "config_base_class_includedirs_example.json",
-        "config": "config_base_class_remove_example.json",
+        "setup_config": f"{EXAMPLES_DIR}/config_base_class_includedirs_example.json",
+        "config": f"{EXAMPLES_DIR}/config_base_class_remove_example.json",
         "removed": EXECUTOR_OVERRIDES,
         "remaining": 0
     },
@@ -378,7 +518,89 @@ SCENARIOS = [
             }
         ],
         "removed": ALL_SRC_FUNCTIONS - ALL_RUNS,
+        "removed_count": SRC_TRACE_BLOCKS - len(ALL_RUNS),
         "remaining": len(ALL_RUNS)
+    },
+    #
+    # Round trips. The counting scenarios above prove remove deletes enough
+    # lines; these prove it deletes exactly the right ones, and that running
+    # inject again on top of a remove does not stack a second copy.
+    #
+    #
+    # The per-directory inject_type pair, run for real: test/src asks for
+    # trace+validate, test/proj for trace only, and one unfiltered remove has to
+    # clean both trees without being told what either rule asked for.
+    #
+    # setup_injected pins down what the inject half actually wrote — trace
+    # everywhere plus two markers for each function under test/src that takes
+    # parameters. Without it, "nothing left afterwards" would also pass if
+    # inject_type had silently stopped producing validate blocks.
+    #
+    {
+        "name": "examples: per-directory inject_type, cleaned back to nothing",
+        "setup_config": f"{EXAMPLES_DIR}/config_inject_types_example.json",
+        "config": f"{EXAMPLES_DIR}/config_inject_types_remove_example.json",
+        "setup_injected": (
+            ALL_SRC_MARKERS_WITH_VALIDATE
+            +
+            len(ALL_PROJ_FUNCTIONS)
+        ),
+        "removed": set(),
+        "removed_count": (
+            SRC_TRACE_BLOCKS
+            +
+            len(ALL_PROJ_FUNCTIONS)
+        ),
+        "remaining": 0,
+        "remaining_injected": 0
+    },
+    {
+        "name": "round trip: trace only",
+        "round_trip": {
+            "inject": INJECT_ALL_SRC,
+            "remove": {
+                "directory": "test/src",
+                "function": ""
+            }
+        }
+    },
+    {
+        "name": "round trip: trace + validate",
+        "round_trip": {
+            "inject": INJECT_ALL_SRC_VALIDATE,
+            "remove": {
+                "directory": "test/src",
+                "function": ""
+            }
+        }
+    },
+    {
+        "name": "round trip: trace + validate, targeted both ways",
+        "round_trip": {
+            "inject": {
+                "directory": "test/src",
+                "function": "OnData",
+                "inject_type": [
+                    "trace",
+                    "validate"
+                ]
+            },
+            "remove": {
+                "directory": "test/src",
+                "function": "OnData"
+            }
+        }
+    },
+    #
+    # Byte-level proof for the shipped pair, on top of the counting scenario
+    # above: both fixture trees have to come back exactly as they started.
+    #
+    {
+        "name": "round trip: the per-directory inject_type example pair",
+        "round_trip": {
+            "inject": f"{EXAMPLES_DIR}/config_inject_types_example.json",
+            "remove": f"{EXAMPLES_DIR}/config_inject_types_remove_example.json"
+        }
     }
 ]
 
@@ -436,16 +658,108 @@ def restore_fixtures(saved):
             )
 
 
-def count_traces():
+def count_marker(marker):
 
     total = 0
 
     for path in fixture_files():
         total += path.read_text(
             encoding="utf-8"
-        ).count(TRACE_MARKER)
+        ).count(marker)
 
     return total
+
+
+def count_traces():
+
+    return count_marker(TRACE_MARKER)
+
+
+def count_injected():
+    """
+    Every injected marker, whatever kind wrote it. A trace count alone reports
+    a file as clean while a validate block is still sitting in it — which is
+    exactly the state that made the next inject emit a duplicate.
+    """
+
+    return sum(
+        count_marker(marker)
+        for marker in INJECTED_MARKERS
+    )
+
+
+#
+# The two-line shape a validate block has to have. Written out as a pattern
+# rather than assembled from the package's own formatters, for the same reason
+# INJECTED_MARKERS is: it has to be able to disagree with the tool.
+#
+VALIDATE_BLOCK_RE = re.compile(
+    r"static const char\* __param_names\[\] = \{ (?P<names>[^}]*) \};\n"
+    r"\s*validate_params\(\"(?P<func>[^\"]+)\", __param_names, (?P<args>[^)]*)\);"
+)
+
+
+def check_validate_blocks(expected_blocks):
+    """
+    Reads back every validate block in the fixtures and checks the quoted names
+    against the arguments actually passed: same identifiers, same order, same
+    count.
+
+    Every other assertion in this file counts blocks or lines. None of them
+    would notice a block that names three parameters and passes two, or names
+    them in the wrong order — which is the only thing that makes the generated
+    check worth generating. With one-parameter functions there was nothing to
+    get wrong; the RiskChecker fixture is what gives this teeth.
+    """
+
+    failures = []
+    found = 0
+
+    for path in fixture_files():
+
+        text = path.read_text(encoding="utf-8")
+        name = path.relative_to(ROOT).as_posix()
+
+        for match in VALIDATE_BLOCK_RE.finditer(text):
+
+            found += 1
+
+            names = [
+                part.strip().strip('"')
+                for part in match["names"].split(",")
+            ]
+
+            args = [
+                part.strip()
+                for part in match["args"].split(",")
+            ]
+
+            if names != args:
+                failures.append(
+                    f"{name}: {match['func']} names {names} "
+                    f"but passes {args}"
+                )
+
+    #
+    # A block whose table and call drifted apart — separated, reordered, one of
+    # them missing — does not match the pattern at all, so it would go
+    # uncounted rather than reported. Comparing against the raw call count
+    # turns that silence into a failure.
+    #
+    calls = count_marker("validate_params(")
+
+    if calls != found:
+        failures.append(
+            f"{calls} validate_params calls but only {found} well-formed "
+            "blocks — a name table and its call are not adjacent"
+        )
+
+    if found != expected_blocks:
+        failures.append(
+            f"{found} validate blocks, expected {expected_blocks}"
+        )
+
+    return failures
 
 
 def labels_with_prefix(logger, prefix):
@@ -466,9 +780,17 @@ def check_example_configs():
 
     failures = []
 
-    for config_file in sorted(
-        ROOT.glob("config_*example*.json")
-    ):
+    examples = sorted(
+        ROOT.glob(f"{EXAMPLES_DIR}/config_*example*.json")
+    )
+
+    if not examples:
+        return [
+            f"no example configs found under {EXAMPLES_DIR}/ — moved or "
+            "renamed? this check was passing vacuously"
+        ]
+
+    for config_file in examples:
 
         try:
             resolve_mode_and_rules(
@@ -484,9 +806,10 @@ def check_example_configs():
 
 def check_fixtures_clean(saved=None):
     """
-    The fixtures carry no traces at rest. Before the run that means the
-    previous run cleaned up after itself; after it, that this one did.
-    `saved` also demands byte equality, catching debris a trace count misses.
+    The fixtures carry no injected code of any kind at rest. Before the run
+    that means the previous run cleaned up after itself; after it, that this
+    one did. `saved` also demands byte equality, catching debris a marker count
+    misses.
     """
 
     failures = []
@@ -496,10 +819,13 @@ def check_fixtures_clean(saved=None):
         text = path.read_text(encoding="utf-8")
         name = path.relative_to(ROOT).as_posix()
 
-        if TRACE_MARKER in text:
-            failures.append(
-                f"{name}: {text.count(TRACE_MARKER)} leftover trace(s)"
-            )
+        for marker in INJECTED_MARKERS:
+
+            if marker in text:
+                failures.append(
+                    f"{name}: {text.count(marker)} leftover "
+                    f"{marker.strip()}"
+                )
 
         if saved is not None and text != saved.get(path, text):
             failures.append(
@@ -528,8 +854,104 @@ def apply_config(config_file, logger, stats):
         )
 
 
-def run_scenario(scenario):
+def apply_rule(rule, mode, include_dirs=None):
+
+    process_rule(
+        rule,
+        mode,
+        [],
+        CaptureLogger(),
+        fresh_stats(),
+        include_dirs=include_dirs or []
+    )
+
+
+def apply_step(step, mode, include_dirs=None):
+    """
+    A round-trip step is either a rule dict or the path of a shipped config
+    file. The config form is what lets the examples be round-tripped as
+    shipped, rather than as a copy of their rules that can drift.
+    """
+
+    if isinstance(step, str):
+
+        return apply_config(
+            step,
+            CaptureLogger(),
+            fresh_stats()
+        )
+
+    return apply_rule(
+        step,
+        mode,
+        include_dirs
+    )
+
+
+def diff_against(expected, what):
+
+    return [
+        f"{path.relative_to(ROOT).as_posix()}: {what}"
+        for path, text in snapshot_fixtures().items()
+        if text != expected[path]
+    ]
+
+
+def check_round_trip(trip, saved):
+    """
+    Two assertions, and the second is the one that earns its keep:
+
+      inject -> remove                 == the original file, byte for byte
+      inject -> remove -> inject       == what the first inject produced
+
+    A remove that leaves one block of a two-block injection behind passes every
+    count-based check — the file looks clean enough. Then the next inject sees
+    no trace, writes a fresh block above the orphan, and you get two
+    `__param_names` declarations in one scope and a file that will not compile.
+    Only re-injecting and comparing catches that.
+    """
+
+    failures = []
+
+    include_dirs = trip.get("include_dirs", [])
+
+    restore_fixtures(saved)
+
+    apply_step(trip["inject"], "inject", include_dirs)
+
+    after_inject = snapshot_fixtures()
+
+    if after_inject == saved:
+        return [
+            "inject changed nothing, so the round trip proves nothing"
+        ]
+
+    apply_step(trip["remove"], "remove", include_dirs)
+
+    failures += diff_against(
+        saved,
+        "not restored by remove"
+    )
+
+    apply_step(trip["inject"], "inject", include_dirs)
+
+    failures += diff_against(
+        after_inject,
+        "differs after inject/remove/inject"
+    )
+
+    return failures
+
+
+def run_scenario(scenario, saved):
     """Returns a list of failure descriptions (empty means the test passed)."""
+
+    if "round_trip" in scenario:
+
+        return check_round_trip(
+            scenario["round_trip"],
+            saved
+        )
 
     if scenario.get("setup_config"):
 
@@ -549,6 +971,25 @@ def run_scenario(scenario):
             fresh_stats(),
             include_dirs=scenario.get("setup_include_dirs", [])
         )
+
+    setup_failures = []
+
+    #
+    # Asserted before the rule under test runs, because a remove scenario that
+    # only checks "nothing left" passes just as well when the setup put nothing
+    # there in the first place. This is what stops the setup from going quietly
+    # vacuous.
+    #
+    if "setup_injected" in scenario:
+
+        planted = count_injected()
+
+        if planted != scenario["setup_injected"]:
+
+            setup_failures.append(
+                f"setup planted {planted} injected markers, "
+                f"expected {scenario['setup_injected']}"
+            )
 
     logger = CaptureLogger()
     stats = fresh_stats()
@@ -572,7 +1013,7 @@ def run_scenario(scenario):
             include_dirs=scenario.get("include_dirs", [])
         )
 
-    failures = []
+    failures = list(setup_failures)
 
     checks = [
         ("injected", INJECTED_PREFIX, "trace_injected"),
@@ -609,16 +1050,30 @@ def run_scenario(scenario):
                 f"expected {expected_count}"
             )
 
-    if "remaining" in scenario:
+    leftovers = [
+        ("remaining", count_traces, "traces"),
+        ("remaining_injected", count_injected, "injected markers")
+    ]
 
-        remaining = count_traces()
+    for key, count, what in leftovers:
 
-        if remaining != scenario["remaining"]:
+        if key not in scenario:
+            continue
+
+        remaining = count()
+
+        if remaining != scenario[key]:
 
             failures.append(
-                f"{remaining} traces left in the fixtures, "
-                f"expected {scenario['remaining']}"
+                f"{remaining} {what} left in the fixtures, "
+                f"expected {scenario[key]}"
             )
+
+    if "validate_blocks" in scenario:
+
+        failures += check_validate_blocks(
+            scenario["validate_blocks"]
+        )
 
     warned = INCOMPLETE_WARNING in logger.text
     expected_warning = scenario.get("warns", False)
@@ -644,7 +1099,7 @@ def run_all_scenarios(saved, report=None):
     for scenario in SCENARIOS:
 
         try:
-            failures = run_scenario(scenario)
+            failures = run_scenario(scenario, saved)
         except Exception as error:
             failures = [f"raised {type(error).__name__}: {error}"]
         finally:
@@ -683,6 +1138,87 @@ def patch_remove_ignores_filters():
 
     def undo():
         processor.remove_trace_from_file = original
+
+    return undo
+
+
+def patch_remove_ignores_validate():
+    """
+    Put the old bug back: make every line-level check recognise ScopeTrace and
+    nothing else, so a trace+validate injection loses its trace and keeps its
+    validate. This is the regression the kind-blind remover exists to prevent,
+    so something had better go red.
+    """
+
+    from trace_injector_pkg import line_utils
+
+    original = line_utils.kind_of_line
+
+    def trace_only(line):
+
+        kind = original(line)
+
+        return kind if kind == "trace" else None
+
+    line_utils.kind_of_line = trace_only
+
+    def undo():
+        line_utils.kind_of_line = original
+
+    return undo
+
+
+def patch_validate_drops_last_argument():
+    """
+    Emit the full name table but pass one argument short of it — a validate
+    block of exactly the right size and the wrong content.
+
+    No count notices this. The block is still two lines, remove still takes it
+    back out, every round trip still restores byte for byte. Only reading the
+    names against the arguments does.
+
+    Functions of one parameter are left correct on purpose: back when test/src
+    had nothing wider than that, this breakage would have been invisible. It is
+    the RiskChecker arities that make it show up.
+    """
+
+    from trace_injector_pkg import constants
+
+    original = constants.INJECTION_KINDS
+
+    def truncated(func_name, param_names):
+
+        if not param_names:
+            return []
+
+        names = ", ".join(
+            f'"{name}"'
+            for name in param_names
+        )
+
+        args = ", ".join(param_names[:-1]) or param_names[0]
+
+        return [
+            f"    static const char* __param_names[] = {{ {names} }};\n",
+            f'    validate_params("{func_name}", __param_names, {args});\n',
+            "\n"
+        ]
+
+    patched = []
+
+    for kind, build, markers in original:
+
+        if kind == "validate":
+            build = truncated
+
+        patched.append(
+            (kind, build, markers)
+        )
+
+    constants.INJECTION_KINDS = tuple(patched)
+
+    def undo():
+        constants.INJECTION_KINDS = original
 
     return undo
 
@@ -737,6 +1273,43 @@ SELF_CHECKS = [
         ],
         "must_pass": [
             "remove: unfiltered rule strips the whole file"
+        ]
+    },
+    {
+        "name": "remove blind to everything but trace",
+        "patch": patch_remove_ignores_validate,
+        "must_fail": [
+            "remove: unfiltered rule strips validate as well as trace",
+            "remove: targeted rule strips validate as well as trace",
+            "round trip: trace + validate",
+            "round trip: trace + validate, targeted both ways",
+            #
+            # The shipped pair is in here too, now that test/src is the tree
+            # asking for validate: the examples have to be covered by the same
+            # guard as the hand-written rules.
+            #
+            "examples: per-directory inject_type, cleaned back to nothing",
+            "round trip: the per-directory inject_type example pair"
+        ],
+        "must_pass": [
+            "remove: unfiltered rule strips the whole file",
+            "round trip: trace only"
+        ]
+    },
+    {
+        "name": "validate arguments one short of the name table",
+        "patch": patch_validate_drops_last_argument,
+        "must_fail": [
+            "validate: names match the arguments at every arity"
+        ],
+        #
+        # Everything else stays green, which is the finding: a validate block
+        # can be entirely wrong and still satisfy every count in this file.
+        #
+        "must_pass": [
+            "remove: unfiltered rule strips validate as well as trace",
+            "remove: targeted rule strips validate as well as trace",
+            "round trip: trace + validate"
         ]
     },
     {
