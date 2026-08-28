@@ -57,76 +57,12 @@ sys.stdout.reconfigure(
 #
 # ---------------------------------------------------------------- libclang
 #
-# The clang python bindings load libclang through the OS loader, which does
-# not look inside site-packages. Finding it here rather than making every
-# caller export a variable is the difference between "run this file" and
-# "run this file after reading the README".
+# The tool's own locator, not a copy of it. Most checks here call process_rule
+# directly and never reach cli.py, so without this the suite would need its own
+# way of finding libclang — and then it would be testing the tool while relying
+# on a search path the tool does not use.
 #
-def libclang_candidates():
-
-    import clang
-
-    names = {
-        "win32": "libclang.dll",
-        "darwin": "libclang.dylib"
-    }
-
-    name = names.get(sys.platform, "libclang.so")
-
-    yield Path(clang.__file__).parent / "native" / name
-
-    for base in (
-        Path(sys.prefix),
-        Path(sys.prefix) / "Library",
-        Path("C:/Program Files/LLVM"),
-        Path("/usr/lib/llvm-14"),
-        Path("/usr/lib"),
-        Path("/usr/local/lib"),
-        Path("/opt/homebrew/lib")
-    ):
-        yield base / "bin" / name
-        yield base / "lib" / name
-        yield base / name
-
-
-def configure_libclang():
-    """Returns the path in use, or None if the default loader already works."""
-
-    from clang import cindex
-
-    explicit = os.environ.get(
-        "TRACE_INJECTOR_LIBCLANG",
-        ""
-    )
-
-    if explicit:
-        cindex.Config.set_library_file(explicit)
-        return explicit
-
-    try:
-        cindex.Index.create()
-        return None
-    except cindex.LibclangError:
-        pass
-
-    for candidate in libclang_candidates():
-
-        if not candidate.is_file():
-            continue
-
-        cindex.Config.set_library_file(str(candidate))
-
-        try:
-            cindex.Index.create()
-            return str(candidate)
-        except cindex.LibclangError:
-            cindex.Config.loaded = False
-
-    raise SystemExit(
-        "Could not load libclang. Install it (pip install libclang) or "
-        "set TRACE_INJECTOR_LIBCLANG to the shared library."
-    )
-
+from trace_injector_pkg.libclang import configure as configure_libclang
 
 LIBCLANG_IN_USE = configure_libclang()
 

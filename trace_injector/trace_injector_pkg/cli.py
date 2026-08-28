@@ -4,6 +4,7 @@ from pathlib import Path
 from .logger import Logger
 
 from .config import load_config, resolve_headers, resolve_mode_and_rules
+from .libclang import configure as configure_libclang
 from .preflight import prepare_parameter_check
 from .processor import process_rule
 
@@ -34,6 +35,12 @@ def main():
     )
 
     args = parser.parse_args()
+
+    #
+    # Before the logger, so a run that cannot parse anything at all fails with
+    # its message on stderr and no half-written log file to explain.
+    #
+    libclang = configure_libclang()
 
     cleanup_logs()
 
@@ -66,6 +73,17 @@ def main():
     logger.log(
         f"Mode: {mode}"
     )
+
+    #
+    # Only when it had to be searched for. Which libclang answered is the first
+    # thing worth knowing when a base_class rule matches nothing, and the log is
+    # the only place that survives the run.
+    #
+    if libclang:
+
+        logger.log(
+            f"libclang: {libclang}"
+        )
 
     logger.log(
         "================================================="

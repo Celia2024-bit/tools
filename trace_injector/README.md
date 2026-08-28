@@ -6,7 +6,28 @@ rule via `inject_type`. Function boundaries come from libclang's AST, not from
 regex, so overloads and multi-line signatures are handled correctly.
 
 ```
+pip install libclang
 python trace_injector.py --config config.json
+```
+
+That is the whole install. The tool locates the shared library itself, because
+the clang bindings load it through the OS loader and the OS loader does not look
+inside site-packages — so `pip install libclang` alone puts the file on disk and
+the import still fails. The path it settled on is logged whenever it had to go
+looking, since "which libclang answered" is the first thing worth knowing when a
+`base_class` rule matches nothing:
+
+```
+Trace Injector v1.2
+Mode: inject
+libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll
+```
+
+If yours lives somewhere the search does not cover, name it and the search is
+skipped entirely:
+
+```
+TRACE_INJECTOR_LIBCLANG=/opt/llvm/lib/libclang.so python trace_injector.py --config config.json
 ```
 
 Log lines name each function by its fully qualified name, so overrides that
@@ -318,8 +339,9 @@ is broken.
 python test/run_tests.py
 ```
 
-No arguments and no environment setup — it locates libclang itself and puts
-the fixture trees back exactly as it found them. Three parts:
+No arguments and no environment setup — it finds libclang through the tool's own
+locator, not a copy of it, and puts the fixture trees back exactly as it found
+them. Three parts:
 
 **1. Scenarios.** Each runs a real rule against the fixture trees and
 asserts the exact set of functions that received (or lost) a trace. Because
@@ -406,10 +428,5 @@ just above the list. If a change of yours makes an existing scenario fail,
 read the diff it prints before editing the expectation — that diff is the
 whole point of the file.
 
-Autodetection covers site-packages and the usual LLVM install dirs. If
-libclang lives somewhere else, point at it explicitly:
-
-```
-TRACE_INJECTOR_LIBCLANG=C:/Python/Lib/site-packages/clang/native/libclang.dll \
-    python test/run_tests.py
-```
+`TRACE_INJECTOR_LIBCLANG` works here exactly as it does for the tool, since it
+is the same locator.
