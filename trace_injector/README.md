@@ -22,7 +22,7 @@ share a method name stay distinguishable:
 ## Config
 
 Top level holds exactly one of `inject` or `remove` (never both), plus the
-optional `exclude` and `include_dirs` keys.
+optional `exclude`, `include_dirs` and `headers` keys.
 
 ```json
 {
@@ -95,6 +95,56 @@ Overloads are handled per definition, not per name: two overloads with
 different parameter lists each get their own.
 
 `remove` rules do **not** take `inject_type`. See below for why.
+
+### `headers`
+
+`validate` calls `validate_params()`, which lives in a **generated**
+`ParameterCheck.h` — generated against one specific `Types.h`, because the
+checks it performs depend on the types it is checking. So a rule asking for
+`validate` has to say where that `Types.h` is:
+
+```json
+"headers": {
+    "types_header": "test/include/Types.h",
+    "generate_into": "test/include"
+}
+```
+
+| Key | Meaning | Empty means |
+|---|---|---|
+| `types_header` | the project's `Types.h`. **Required** by any `validate` rule | refuse to run |
+| `generate_into` | where to write the generated `ParameterCheck.h` | next to `Types.h` |
+
+Generating it is the **first** action of the run, before a single `.cpp` is
+opened, and the generator's verdict on `Types.h` decides whether the run
+happens at all:
+
+```
+⚙️ Generating ParameterCheck.h from: test\include\TypesUnprepared.h
+   --> Validating test\include\TypesUnprepared.h...
+   [Validation Failed] Enum 'Side' lacks 'check_traits<Side>' specialization.
+   [Build Stopped] Types validation failed. Generation aborted.
+   ❌ Types.h was rejected, so validate_params() would not compile against it.
+   ❌ Nothing was injected. Fix the types, or drop "validate" from the rule.
+```
+
+Exit code 1, and **nothing was modified** — not the sources, not the
+generated headers. That is worth more than it looks: an injection that cannot
+compile is worse than no injection, and undoing one costs a second run over
+the whole tree. The generator writes nothing when it rejects a `Types.h`, and
+this aborts before its first write, so the two halves compose into "a refused
+run leaves everything exactly as it found it".
+
+The generator is the sibling `parameters_check` tool, used as a library and
+found next to this one. It needs `jinja2` — the only dependency on this path,
+and only on this path.
+
+Neither key means anything to a `remove` run, or to a `trace`-only inject.
+Neither has any use for a `Types.h`, so neither is asked for one.
+
+Keys `headers` does not read are rejected rather than ignored. A previous
+version of this tool shipped configs carrying a `headers` key that nothing
+read, which reads like a feature until you depend on it.
 
 `base_class` is for the "I don't know who implements/calls this virtual
 function" case: name the base class and the tool finds every override down
@@ -226,7 +276,9 @@ Echoing that would train you to ignore the warning that matters.
 - **No `#include` is added.** Injected files reference `ScopeTrace` and
   `validate_params` without including their headers, so they will not compile
   until you add them (a project-wide precompiled header is the usual answer).
-  The `headers` key some configs carry is not read by anything yet.
+  `headers` closes half of this: it makes sure `ParameterCheck.h` exists and
+  was generated for your `Types.h`. Getting each `.cpp` to *find* it is still
+  yours to arrange.
 
 ## Examples
 
@@ -237,7 +289,7 @@ Echoing that would train you to ignore the warning that matters.
 | `config_base_class_example.json` | every `Run()` override under `IStrategy`, no `include_dirs` needed |
 | `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required |
 | `config_base_class_remove_example.json` | the exact undo of the one above — same fields, `inject` swapped for `remove` |
-| `config_inject_types_example.json` | two directories, a different `inject_type` for each |
+| `config_inject_types_example.json` | two directories, a different `inject_type` for each, plus the `headers` block the `validate` one needs |
 | `config_inject_types_remove_example.json` | the undo of the one above — one unfiltered rule per tree, no `inject_type` needed |
 
 ## Tests
@@ -270,6 +322,17 @@ Skipped when part 1 is already failing, since it asserts *which* scenarios fail.
 **3. Fixture audit.** The fixtures must carry no injected code of any kind
 before the run and be byte-identical to the snapshot after it, so no result is
 measuring debris left by the previous run.
+
+Three checks sit ahead of the scenarios, since they decide whether a run
+happens at all: the `headers` block accepts the keys it reads and rejects the
+ones it does not, the pre-flight generates both headers for a `Types.h` it
+accepts and neither for one it rejects, and — end to end through the CLI, which
+is the only way to reach the pre-flight — a rejected `Types.h` exits non-zero
+with the fixture trees byte-identical. `test/include/Types.h` and
+`TypesUnprepared.h` are that pair; the accepted run goes first and has to
+change something, or "modified nothing" would pass for a rule that matched
+nothing. These are the only checks here that need `jinja2`, and they skip
+rather than fail without it.
 
 Inject scenarios:
 
