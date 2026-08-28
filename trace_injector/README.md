@@ -278,7 +278,8 @@ Echoing that would train you to ignore the warning that matters.
   until you add them (a project-wide precompiled header is the usual answer).
   `headers` closes half of this: it makes sure `ParameterCheck.h` exists and
   was generated for your `Types.h`. Getting each `.cpp` to *find* it is still
-  yours to arrange.
+  yours to arrange. `inject_files_examples/` holds the header side of the
+  bargain — what `ScopeTrace` is, and what it needs from your logger.
 
 ## Examples
 
