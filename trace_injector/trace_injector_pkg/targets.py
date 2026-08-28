@@ -137,3 +137,13 @@ def iter_target_functions(
             continue
 
         yield node, label
+
+def get_function_param_names(node):
+    """遍历 AST 提取函数的参数变量名"""
+    params = []
+    for child in node.get_children():
+        if child.kind == cindex.CursorKind.PARM_DECL:
+            param_name = child.spelling
+            if param_name:  # 过滤匿名参数
+                params.append(param_name)
+    return params
