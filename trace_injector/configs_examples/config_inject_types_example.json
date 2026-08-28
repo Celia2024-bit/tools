@@ -12,5 +12,10 @@
             "function": "",
             "inject_type": ["trace"]
         }
-    ]
+    ],
+
+    "headers": {
+        "types_header": "test/include/Types.h",
+        "generate_into": "test/include"
+    }
 }

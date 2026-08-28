@@ -54,3 +54,53 @@ def resolve_mode_and_rules(config):
             )
 
     return mode, rules, exclude_rules, include_dirs
+
+
+#
+# Deliberately short. A key here is a promise that something reads it, and the
+# last version of this tool shipped configs carrying a "headers" key that
+# nothing did — which reads as a feature until you rely on it. Unknown keys are
+# rejected rather than ignored so a typo, or a key from a newer config, is loud.
+#
+HEADERS_KEYS = (
+    "types_header",
+    "generate_into"
+)
+
+
+def resolve_headers(config):
+    """
+    The optional "headers" block: where the headers the injected code depends on
+    come from.
+
+      types_header   the project's Types.h, which ParameterCheck.h is generated
+                     against. Required by any rule asking for "validate".
+      generate_into  where to write the generated ParameterCheck.h. Defaults to
+                     the directory holding Types.h.
+
+    Kept out of resolve_mode_and_rules so that function's return shape does not
+    change every time the config grows a key.
+    """
+
+    headers = config.get(
+        "headers",
+        {}
+    )
+
+    if not isinstance(headers, dict):
+        raise ValueError(
+            "\"headers\" must be an object, e.g. "
+            "{ \"types_header\": \"src/Types.h\" }"
+        )
+
+    unknown = sorted(
+        set(headers) - set(HEADERS_KEYS)
+    )
+
+    if unknown:
+        raise ValueError(
+            f"unknown key(s) in \"headers\": {', '.join(unknown)}. "
+            f"Accepted: {', '.join(HEADERS_KEYS)}."
+        )
+
+    return headers

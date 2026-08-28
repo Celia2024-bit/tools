@@ -3,7 +3,8 @@ from pathlib import Path
 
 from .logger import Logger
 
-from .config import load_config, resolve_mode_and_rules
+from .config import load_config, resolve_headers, resolve_mode_and_rules
+from .preflight import prepare_parameter_check
 from .processor import process_rule
 
 
@@ -44,6 +45,8 @@ def main():
 
     mode, rules, exclude_rules, include_dirs = resolve_mode_and_rules(config)
 
+    headers = resolve_headers(config)
+
     stats = {
         "files_scanned": 0,
         "files_modified": 0,
@@ -67,6 +70,26 @@ def main():
     logger.log(
         "================================================="
     )
+
+    #
+    # Before the first file, not after: an injection that cannot compile is
+    # worse than no injection, and undoing one costs a second run.
+    #
+    if not prepare_parameter_check(
+        mode,
+        rules,
+        headers,
+        logger
+    ):
+
+        logger.log()
+        logger.log(
+            f"Log written to: {logger.log_file}"
+        )
+
+        logger.close()
+
+        return 1
 
     for rule in rules:
 
