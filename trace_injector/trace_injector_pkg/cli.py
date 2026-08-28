@@ -3,9 +3,8 @@ from pathlib import Path
 
 from .logger import Logger
 
-from .config import load_config, resolve_headers, resolve_mode_and_rules
+from .config import load_config, resolve_mode_and_rules
 from .libclang import configure as configure_libclang
-from .preflight import prepare_parameter_check
 from .processor import process_rule
 
 
@@ -22,9 +21,9 @@ def cleanup_logs():
 
 def main():
     """
-    Returns the process exit code: 0 for a run that did what it was asked,
-    non-zero for one that refused. A build step invoking this needs to be able
-    to tell those apart without reading the log.
+    Returns the process exit code: 0 for a run that did what it was asked. A
+    config this tool will not accept raises out of here rather than returning,
+    so a build step sees a non-zero exit either way.
     """
 
     parser = argparse.ArgumentParser()
@@ -51,8 +50,6 @@ def main():
     )
 
     mode, rules, exclude_rules, include_dirs = resolve_mode_and_rules(config)
-
-    headers = resolve_headers(config)
 
     stats = {
         "files_scanned": 0,
@@ -88,26 +85,6 @@ def main():
     logger.log(
         "================================================="
     )
-
-    #
-    # Before the first file, not after: an injection that cannot compile is
-    # worse than no injection, and undoing one costs a second run.
-    #
-    if not prepare_parameter_check(
-        mode,
-        rules,
-        headers,
-        logger
-    ):
-
-        logger.log()
-        logger.log(
-            f"Log written to: {logger.log_file}"
-        )
-
-        logger.close()
-
-        return 1
 
     for rule in rules:
 

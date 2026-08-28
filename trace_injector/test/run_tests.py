@@ -70,12 +70,7 @@ from trace_injector_pkg import targets
 from trace_injector_pkg.cli import cleanup_logs, main as cli_main
 from trace_injector_pkg.config import (
     load_config,
-    resolve_headers,
     resolve_mode_and_rules
-)
-from trace_injector_pkg.preflight import (
-    GENERATOR_PATH,
-    prepare_parameter_check
 )
 from trace_injector_pkg.processor import process_rule
 
@@ -744,7 +739,6 @@ def check_example_configs():
             config = load_config(config_file)
 
             resolve_mode_and_rules(config)
-            resolve_headers(config)
 
         except Exception as error:
             failures.append(
@@ -754,281 +748,14 @@ def check_example_configs():
     return failures
 
 
-#
-# ------------------------------------------------------------- pre-flight
-#
-# A rule asking for "validate" writes validate_params() calls, which only exist
-# if ParameterCheck.h has been generated against the project's Types.h. The
-# generator is the sibling parameters_check tool, and its verdict on Types.h is
-# what decides whether this run happens at all.
-#
-TYPES_HEADER = "test/include/Types.h"
-TYPES_UNPREPARED_HEADER = "test/include/TypesUnprepared.h"
-
-#
-# Written by the generator, next to the Types.h it was pointed at. Not checked
-# in, so their presence or absence is itself an assertion.
-#
-GENERATED_HEADERS = (
-    HERE / "include" / "CheckTraits.h",
-    HERE / "include" / "ParameterCheck.h"
-)
-
-
-def clean_generated_headers():
-
-    for path in GENERATED_HEADERS:
-        path.unlink(missing_ok=True)
-
-
-def generator_unavailable():
-    """
-    Why the pre-flight checks cannot run, or "" if they can.
-
-    Everything else in this file needs nothing but the standard library and
-    libclang, which is what makes "just run it" true. The generator needs
-    jinja2, so a machine without it should skip these two checks rather than
-    fail them.
-    """
-
-    if not GENERATOR_PATH.exists():
-        return f"parameters_check not found at {GENERATOR_PATH}"
-
-    try:
-        import jinja2                                    # noqa: F401
-    except ImportError:
-        return "jinja2 is not installed"
-
-    return ""
-
-
-def check_headers_config():
-    """
-    The "headers" block accepts what it reads and nothing else.
-
-    A config key that no code reads is worse than a missing feature: it reads
-    like one. This tool shipped exactly that once, so an unrecognised key here
-    has to be an error rather than something quietly ignored.
-    """
-
-    failures = []
-
-    accepted = [
-        ({}, "no headers block at all"),
-        (
-            {
-                "headers": {
-                    "types_header": "src/Types.h",
-                    "generate_into": "include"
-                }
-            },
-            "both documented keys"
-        )
-    ]
-
-    for config, what in accepted:
-
-        try:
-            resolve_headers(config)
-        except ValueError as error:
-            failures.append(f"{what} rejected: {error}")
-
-    rejected = [
-        ({"headers": ["src/Types.h"]}, "a list instead of an object"),
-        ({"headers": {"types_headers": "x"}}, "a typo'd key"),
-        ({"headers": {"include": ["ScopeTrace.h"]}}, "a key nothing reads yet")
-    ]
-
-    for config, what in rejected:
-
-        try:
-            resolve_headers(config)
-            failures.append(f"{what} accepted")
-        except ValueError:
-            pass
-
-    return failures
-
-
-def preflight(mode, rules, headers):
-
-    logger = CaptureLogger()
-
-    proceed = prepare_parameter_check(
-        mode,
-        rules,
-        headers,
-        logger
-    )
-
-    return proceed, logger
-
-
-def check_preflight():
-    """
-    Generating ParameterCheck.h is the first action of a validate run, and a
-    Types.h the generator rejects stops the run.
-
-    Both directions are asserted, which is what keeps this from going vacuous:
-    a valid Types.h has to produce the two headers, an unprepared one has to
-    produce neither and refuse. A pre-flight that always said yes, or always
-    said no, fails one half or the other.
-    """
-
-    failures = []
-
-    validate_rules = [INJECT_ALL_SRC_VALIDATE]
-    trace_rules = [INJECT_ALL_SRC]
-
-    clean_generated_headers()
-
-    #
-    # Nothing to prepare: taking code back out needs no headers, and a
-    # trace-only rule never mentions Types.h.
-    #
-    proceed, _ = preflight("remove", validate_rules, {})
-
-    if not proceed:
-        failures.append(
-            "a remove run demanded a Types.h it has no use for"
-        )
-
-    proceed, _ = preflight("inject", trace_rules, {})
-
-    if not proceed:
-        failures.append(
-            "a trace-only run demanded a Types.h it has no use for"
-        )
-
-    generated = [
-        path.name
-        for path in GENERATED_HEADERS
-        if path.exists()
-    ]
-
-    if generated:
-        failures.append(
-            f"generated {', '.join(generated)} for a run that never asked "
-            "for validate"
-        )
-
-    #
-    # Asking for validate without saying where Types.h is.
-    #
-    proceed, logger = preflight("inject", validate_rules, {})
-
-    if proceed:
-        failures.append(
-            "validate with no types_header was allowed to proceed"
-        )
-
-    elif "types_header" not in logger.text:
-        failures.append(
-            "the refusal does not name the key that is missing"
-        )
-
-    #
-    # A Types.h the generator rejects.
-    #
-    proceed, _ = preflight(
-        "inject",
-        validate_rules,
-        {"types_header": TYPES_UNPREPARED_HEADER}
-    )
-
-    if proceed:
-        failures.append(
-            f"{TYPES_UNPREPARED_HEADER} was accepted"
-        )
-
-    generated = [
-        path.name
-        for path in GENERATED_HEADERS
-        if path.exists()
-    ]
-
-    if generated:
-        failures.append(
-            f"a rejected Types.h still left {', '.join(generated)} behind"
-        )
-
-    #
-    # And one it accepts.
-    #
-    proceed, logger = preflight(
-        "inject",
-        validate_rules,
-        {"types_header": TYPES_HEADER}
-    )
-
-    if not proceed:
-        failures.append(
-            f"{TYPES_HEADER} was rejected: {logger.text}"
-        )
-
-    else:
-
-        missing = [
-            path.name
-            for path in GENERATED_HEADERS
-            if not path.exists()
-        ]
-
-        if missing:
-            failures.append(
-                f"accepted Types.h but never wrote {', '.join(missing)}"
-            )
-
-        #
-        # And again, over its own output. A header rewritten with identical
-        # content still moves its mtime, and every translation unit that
-        # includes it then rebuilds -- once per run of a tool that exists to
-        # sweep a whole tree. mtime rather than content is deliberately the
-        # assertion: comparing content would pass for a rewrite, which is the
-        # thing being ruled out.
-        #
-        before = {
-            path: path.stat().st_mtime_ns
-            for path in GENERATED_HEADERS
-            if path.exists()
-        }
-
-        proceed, logger = preflight(
-            "inject",
-            validate_rules,
-            {"types_header": TYPES_HEADER}
-        )
-
-        if not proceed:
-            failures.append(
-                f"the second run over the same Types.h failed: {logger.text}"
-            )
-
-        rewritten = sorted(
-            path.name
-            for path, mtime in before.items()
-            if path.stat().st_mtime_ns != mtime
-        )
-
-        if rewritten:
-            failures.append(
-                f"an unchanged {', '.join(rewritten)} was rewritten, so every "
-                "file including it rebuilds on every run"
-            )
-
-    clean_generated_headers()
-
-    return failures
-
-
 def run_cli(config):
     """
     Drive the whole CLI over a throwaway config, the way a build step does, and
     return its exit code.
 
-    The scenarios call process_rule directly, which skips the pre-flight
-    entirely — so the one assertion that matters here, that an aborted run
-    modifies nothing, can only be made from the outside.
+    Everything else here calls process_rule directly, which never reaches
+    cli.py — so a config the CLI chokes on, or a summary line naming a stat
+    nobody counts, would stay hidden until somebody ran the tool for real.
     """
 
     config_file = HERE / "_tmp_config.json"
@@ -1056,63 +783,104 @@ def run_cli(config):
         cleanup_logs()
 
 
-def check_validate_abort(saved):
+def check_cli_round_trip(saved):
     """
-    End to end: a rejected Types.h leaves the fixture trees untouched and exits
-    non-zero.
+    End to end through the CLI: inject, then remove, then byte-identical again.
 
-    The accepted run comes first and has to change something. Without it,
-    "modified nothing" would pass just as well for a rule that matched nothing
-    at all.
+    The inject half has to change something, or "restored" below would pass just
+    as well for a run that did nothing at all.
     """
 
     failures = []
 
-    def config_for(types_header):
-
-        return {
-            "inject": [INJECT_ALL_SRC_VALIDATE],
-            "headers": {
-                "types_header": types_header
-            }
-        }
-
-    clean_generated_headers()
     restore_fixtures(saved)
 
     code = run_cli(
-        config_for(TYPES_HEADER)
+        {"inject": [INJECT_ALL_SRC_VALIDATE]}
     )
 
     if code != 0:
         failures.append(
-            f"a valid Types.h exited {code}"
+            f"the inject run exited {code}"
         )
 
     if snapshot_fixtures() == saved:
         failures.append(
-            "injected nothing, so the abort below would prove nothing"
+            "injected nothing, so the remove below proves nothing"
         )
 
-    restore_fixtures(saved)
-    clean_generated_headers()
-
     code = run_cli(
-        config_for(TYPES_UNPREPARED_HEADER)
+        {
+            "remove": [
+                {
+                    "directory": "test/src",
+                    "function": ""
+                }
+            ]
+        }
     )
 
-    if code == 0:
+    if code != 0:
         failures.append(
-            "an unprepared Types.h exited 0"
+            f"the remove run exited {code}"
         )
 
     failures += diff_against(
         saved,
-        "modified by a run that should have aborted"
+        "not restored by the CLI remove"
     )
 
-    clean_generated_headers()
     restore_fixtures(saved)
+
+    return failures
+
+
+def check_unknown_config_key():
+    """
+    A top-level key nothing reads is an error, not something ignored.
+
+    This tool shipped a "headers" block that nothing read for a while, and it
+    read like a feature until somebody relied on it. The same key is now the
+    likeliest thing to be left in an old config, where silence would mean "your
+    ParameterCheck.h is being generated" long after that stopped being true.
+    """
+
+    failures = []
+
+    rejected = [
+        (
+            {
+                "inject": [INJECT_ALL_SRC],
+                "headers": {"types_header": "test/include/Types.h"}
+            },
+            "a leftover headers block"
+        ),
+        (
+            {"inject": [INJECT_ALL_SRC], "exlude": []},
+            "a typo'd exclude"
+        )
+    ]
+
+    for config, what in rejected:
+
+        try:
+            resolve_mode_and_rules(config)
+            failures.append(f"{what} was accepted")
+        except ValueError:
+            pass
+
+    accepted = {
+        "inject": [INJECT_ALL_SRC],
+        "exclude": [],
+        "include_dirs": ["test/proj/include"]
+    }
+
+    try:
+        resolve_mode_and_rules(accepted)
+    except ValueError as error:
+        failures.append(
+            f"every documented key together was rejected: {error}"
+        )
 
     return failures
 
@@ -1723,40 +1491,21 @@ def main():
         check_example_configs()
     )
     report.record(
-        "headers config accepts only what it reads",
-        check_headers_config()
+        "config rejects a key nothing reads",
+        check_unknown_config_key()
     )
 
     saved = snapshot_fixtures()
 
-    #
-    # The generator is the one thing here that needs a package installed, so
-    # its absence skips rather than fails — see generator_unavailable().
-    #
-    no_generator = generator_unavailable()
-
-    if no_generator:
-
-        print(
-            f"skip  pre-flight checks — {no_generator}"
-        )
-
-    else:
-
-        report.record(
-            "pre-flight generates ParameterCheck.h, or refuses",
-            check_preflight()
-        )
-
     try:
 
-        if not no_generator:
-            report.record(
-                "rejected Types.h aborts before touching a file",
-                check_validate_abort(saved)
-            )
-
         run_all_scenarios(saved, report=report.record)
+
+        report.record(
+            "the CLI injects and removes end to end",
+            check_cli_round_trip(saved)
+        )
+
     finally:
         restore_fixtures(saved)
 

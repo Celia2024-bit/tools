@@ -12,17 +12,41 @@ def load_config(config_file):
         return json.load(fp)
 
 
+#
+# Deliberately short. A key here is a promise that something reads it, and this
+# tool shipped a "headers" block that nothing read for a while — which looks
+# like a feature until you rely on it. So an unrecognised key is an error rather
+# than something quietly ignored, and a config left over from the version that
+# generated ParameterCheck.h says so instead of silently generating nothing.
+#
+TOP_LEVEL_KEYS = (
+    "inject",
+    "remove",
+    "exclude",
+    "include_dirs"
+)
+
+
 def resolve_mode_and_rules(config):
     """
-    New config format: top-level "inject" or "remove" key holds the rule
-    list (mutually exclusive), plus optional "exclude" and "include_dirs"
-    keys.
+    Top-level "inject" or "remove" key holds the rule list (mutually
+    exclusive), plus optional "exclude" and "include_dirs" keys.
 
     Both modes accept the same rule fields — remove targets exactly what the
     matching inject rule would have added.
 
     Returns (mode, rules, exclude_rules, include_dirs).
     """
+
+    unknown = sorted(
+        set(config) - set(TOP_LEVEL_KEYS)
+    )
+
+    if unknown:
+        raise ValueError(
+            f"unknown top-level key(s): {', '.join(unknown)}. "
+            f"Accepted: {', '.join(TOP_LEVEL_KEYS)}."
+        )
 
     has_inject = "inject" in config
     has_remove = "remove" in config
@@ -54,53 +78,3 @@ def resolve_mode_and_rules(config):
             )
 
     return mode, rules, exclude_rules, include_dirs
-
-
-#
-# Deliberately short. A key here is a promise that something reads it, and the
-# last version of this tool shipped configs carrying a "headers" key that
-# nothing did — which reads as a feature until you rely on it. Unknown keys are
-# rejected rather than ignored so a typo, or a key from a newer config, is loud.
-#
-HEADERS_KEYS = (
-    "types_header",
-    "generate_into"
-)
-
-
-def resolve_headers(config):
-    """
-    The optional "headers" block: where the headers the injected code depends on
-    come from.
-
-      types_header   the project's Types.h, which ParameterCheck.h is generated
-                     against. Required by any rule asking for "validate".
-      generate_into  where to write the generated ParameterCheck.h. Defaults to
-                     the directory holding Types.h.
-
-    Kept out of resolve_mode_and_rules so that function's return shape does not
-    change every time the config grows a key.
-    """
-
-    headers = config.get(
-        "headers",
-        {}
-    )
-
-    if not isinstance(headers, dict):
-        raise ValueError(
-            "\"headers\" must be an object, e.g. "
-            "{ \"types_header\": \"src/Types.h\" }"
-        )
-
-    unknown = sorted(
-        set(headers) - set(HEADERS_KEYS)
-    )
-
-    if unknown:
-        raise ValueError(
-            f"unknown key(s) in \"headers\": {', '.join(unknown)}. "
-            f"Accepted: {', '.join(HEADERS_KEYS)}."
-        )
-
-    return headers

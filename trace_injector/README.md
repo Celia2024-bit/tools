@@ -43,7 +43,9 @@ share a method name stay distinguishable:
 ## Config
 
 Top level holds exactly one of `inject` or `remove` (never both), plus the
-optional `exclude`, `include_dirs` and `headers` keys.
+optional `exclude` and `include_dirs` keys. A top-level key that is none of
+those four is an error rather than something ignored — a key nothing reads
+looks like a feature until you depend on it.
 
 ```json
 {
@@ -117,71 +119,7 @@ different parameter lists each get their own.
 
 `remove` rules do **not** take `inject_type`. See below for why.
 
-### `headers`
-
-`validate` calls `validate_params()`, which lives in a **generated**
-`ParameterCheck.h` — generated against one specific `Types.h`, because the
-checks it performs depend on the types it is checking. So a rule asking for
-`validate` has to say where that `Types.h` is:
-
-```json
-"headers": {
-    "types_header": "test/include/Types.h",
-    "generate_into": "test/include"
-}
-```
-
-| Key | Meaning | Empty means |
-|---|---|---|
-| `types_header` | the project's `Types.h`. **Required** by any `validate` rule | refuse to run |
-| `generate_into` | where to write the generated `ParameterCheck.h` | next to `Types.h` |
-
-Generating it is the **first** action of the run, before a single `.cpp` is
-opened, and the generator's verdict on `Types.h` decides whether the run
-happens at all:
-
-```
-⚙️ Generating ParameterCheck.h from: test\include\TypesUnprepared.h
-   --> Validating test\include\TypesUnprepared.h...
-   [Validation Failed] Enum 'Side' lacks 'check_traits<Side>' specialization.
-   [Build Stopped] Types validation failed. Generation aborted.
-   ❌ Types.h was rejected, so validate_params() would not compile against it.
-   ❌ Nothing was injected. Fix the types, or drop "validate" from the rule.
-```
-
-Exit code 1, and **nothing was modified** — not the sources, not the
-generated headers. That is worth more than it looks: an injection that cannot
-compile is worse than no injection, and undoing one costs a second run over
-the whole tree. The generator writes nothing when it rejects a `Types.h`, and
-this aborts before its first write, so the two halves compose into "a refused
-run leaves everything exactly as it found it".
-
-The generator is the sibling `parameters_check` tool, used as a library and
-found next to this one. It needs `jinja2` — the only dependency on this path,
-and only on this path.
-
-It runs before every sweep, but it only *writes* when the result differs from
-what is already there:
-
-```
-⚙️ Generating ParameterCheck.h from: test\include\Types.h
-   --> CheckTraits.h already up to date, left alone: test\include\CheckTraits.h
-   --> Already up to date, left alone: test\include\ParameterCheck.h
-```
-
-That matters because a header rewritten with identical content still moves its
-mtime, and everything that includes `ParameterCheck.h` would recompile on every
-run of a tool whose whole job is to run over the whole tree. The validation of
-`Types.h` is *not* skipped — the gate above still closes on a `Types.h` that has
-since grown an unprepared type, even with a `ParameterCheck.h` already sitting
-in place.
-
-Neither key means anything to a `remove` run, or to a `trace`-only inject.
-Neither has any use for a `Types.h`, so neither is asked for one.
-
-Keys `headers` does not read are rejected rather than ignored. A previous
-version of this tool shipped configs carrying a `headers` key that nothing
-read, which reads like a feature until you depend on it.
+### `base_class`
 
 `base_class` is for the "I don't know who implements/calls this virtual
 function" case: name the base class and the tool finds every override down
@@ -320,6 +258,8 @@ Echoing that would train you to ignore the warning that matters.
 
 ## Examples
 
+All under `configs_examples/`:
+
 | File | Shows |
 |---|---|
 | `config_inject_example.json` | inject with a function-level `exclude` |
@@ -327,7 +267,8 @@ Echoing that would train you to ignore the warning that matters.
 | `config_base_class_example.json` | every `Run()` override under `IStrategy`, no `include_dirs` needed |
 | `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required |
 | `config_base_class_remove_example.json` | the exact undo of the one above — same fields, `inject` swapped for `remove` |
-| `config_inject_types_example.json` | two directories, a different `inject_type` for each, plus the `headers` block the `validate` one needs |
+| `config_inject_types_example.json` | two directories, a different `inject_type` for each — so one tree gets
+`validate` calls and the other does not |
 | `config_inject_types_remove_example.json` | the undo of the one above — one unfiltered rule per tree, no `inject_type` needed |
 
 ## Tests
@@ -362,19 +303,16 @@ Skipped when part 1 is already failing, since it asserts *which* scenarios fail.
 before the run and be byte-identical to the snapshot after it, so no result is
 measuring debris left by the previous run.
 
-Three checks sit ahead of the scenarios, since they decide whether a run
-happens at all: the `headers` block accepts the keys it reads and rejects the
-ones it does not, the pre-flight generates both headers for a `Types.h` it
-accepts and neither for one it rejects, and — end to end through the CLI, which
-is the only way to reach the pre-flight — a rejected `Types.h` exits non-zero
-with the fixture trees byte-identical. `test/include/Types.h` and
-`TypesUnprepared.h` are that pair; the accepted run goes first and has to
-change something, or "modified nothing" would pass for a rule that matched
-nothing. The accepted one then runs a second time over its own output, and both
-generated headers must come out with their mtime untouched — asserted on mtime
-rather than content, since comparing content would pass for a rewrite, which is
-the thing being ruled out. These are the only checks here that need `jinja2`,
-and they skip rather than fail without it.
+Three checks sit outside the scenario list:
+
+- **A top-level config key nothing reads is rejected**, including the `headers`
+  block this tool used to ship. Silence there would read as "your
+  `ParameterCheck.h` is being generated" long after that stopped being true.
+- **End to end through the CLI**, inject then remove then byte-identical again.
+  Everything else calls `process_rule` directly and never reaches `cli.py`, so a
+  config the CLI chokes on — or a summary line naming a stat nobody counts —
+  would stay hidden until someone ran the tool for real. The inject half has to
+  change something, or "restored" would pass for a run that did nothing.
 
 Inject scenarios:
 
