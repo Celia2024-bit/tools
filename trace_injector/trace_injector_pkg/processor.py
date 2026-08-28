@@ -71,8 +71,8 @@ def process_rule(
                 excluded_functions=excluded_functions,
                 include_dirs=include_dirs
             )
-
         else:
+            inject_types = rule.get("inject_type", ["trace"])
 
             inject_trace_into_file(
                 cpp_file,
@@ -81,5 +81,6 @@ def process_rule(
                 stats,
                 excluded_functions=excluded_functions,
                 target_base_class=base_class,
-                include_dirs=include_dirs
+                include_dirs=include_dirs,
+                inject_types=inject_types
             )
