@@ -8,6 +8,16 @@ from pathlib import Path
 from jinja2 import Template
 
 #
+# A specialization, not a use. "struct check_traits<ActionType>" prepares the
+# type; "check_traits<ActionType>::check(type_)" only calls whatever is there,
+# and matching the bare name counted the call as if it were the definition --
+# which let the deliberately-invalid test fixture pass validation.
+#
+CHECK_TRAITS_SPECIALIZATION_RE = re.compile(
+    r'(?:struct|class)\s+check_traits\s*<\s*([A-Za-z0-9_]+)'
+)
+
+#
 # A declaration, not a call. "bool isValid() const" counts; "p.isValid()" and
 # "ptr->empty()" do not -- those are the type using somebody else's check, and
 # used to be read as the type having one of its own.
@@ -31,7 +41,7 @@ def check_types_header(types_path: Path) -> bool:
 
     struct_matches = re.findall(r'(?:struct|class)\s+([A-Za-z0-9_]+)', content)
     enum_matches = re.findall(r'enum\s+(?:class\s+)?([A-Za-z0-9_]+)', content)
-    check_traits_matches = set(re.findall(r'check_traits<\s*([A-Za-z0-9_]+)\s*>', content))
+    check_traits_matches = set(CHECK_TRAITS_SPECIALIZATION_RE.findall(content))
 
     passed = True
 
