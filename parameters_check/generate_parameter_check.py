@@ -30,12 +30,12 @@ def check_types_header(types_path: Path) -> bool:
     for struct_name in struct_matches:
         if struct_name in ['check_traits', 'std']:
             continue
-            
+
         struct_pattern = rf'(?:struct|class)\s+{struct_name}\s*\{{(.*?)\}};'
         match = re.search(struct_pattern, content, re.DOTALL)
-        
+
         body = match.group(1) if match else ""
-        
+
         has_is_valid = "isValid" in body
         has_empty = "empty" in body
         has_traits = struct_name in check_traits_matches
@@ -54,38 +54,46 @@ def check_types_header(types_path: Path) -> bool:
 
     return passed
 
-def generate_and_deploy(types_path: Path, output_dir: Path):
+def generate_and_deploy(types_path: Path, output_dir: Path) -> bool:
     """
-    Validates target Types.h, deploys CheckTraits.h to Types.h directory, 
-    and renders ParameterCheck.h in output_dir.
+    Validates target Types.h, deploys CheckTraits.h to Types.h directory,
+    and renders ParameterCheck.h in output_dir. Returns True on success.
+
+    Every read-only check runs before the first write. That ordering is the
+    point: this script's first side effect used to be copying CheckTraits.h
+    into the target project's include directory, and it happened BEFORE
+    Types.h was validated. A rejected run therefore still left a file behind
+    in a tree it had just refused to generate for.
     """
     script_dir = Path(__file__).parent
     templates_dir = script_dir / "templates"
     j2_template_path = templates_dir / "ParameterCheck.h.j2"
     check_traits_src = templates_dir / "CheckTraits.h"
 
-    # Step 1: Check template availability
+    # Step 1: Validate Types.h, before anything is written anywhere
+    print(f"--> Validating {types_path}...")
+
+    if not check_types_header(types_path):
+        print("\n[Build Stopped] Types validation failed. Generation aborted.")
+        print("Nothing was written.")
+        return False
+
+    print("--> Types validation passed.")
+
+    # Step 2: Check template availability, still read-only
     if not j2_template_path.exists():
         print(f"[Error] Template not found: {j2_template_path}")
-        sys.exit(1)
+        return False
 
     if not check_traits_src.exists():
         print(f"[Error] CheckTraits.h not found in templates: {check_traits_src}")
-        sys.exit(1)
+        return False
 
-    # Step 2: Copy CheckTraits.h to the SAME folder as Types.h
+    # Step 3: Copy CheckTraits.h to the SAME folder as Types.h
     types_dir = types_path.parent
     target_traits_in_types_dir = types_dir / "CheckTraits.h"
     shutil.copy2(check_traits_src, target_traits_in_types_dir)
     print(f"--> Successfully copied CheckTraits.h to Types directory: {target_traits_in_types_dir}")
-
-    # Step 3: Validate Types.h
-    print(f"--> Validating {types_path}...")
-    if not check_types_header(types_path):
-        print("\n[Build Stopped] Types validation failed. Generation aborted.")
-        sys.exit(1)
-
-    print(f"--> Types validation passed.")
 
     # Ensure ParameterCheck.h output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -111,6 +119,8 @@ def generate_and_deploy(types_path: Path, output_dir: Path):
     print(f"    * Includes Types.h from: '{types_include_str}'")
     print(f"    * Includes CheckTraits.h from: '{traits_include_str}'")
 
+    return True
+
 if __name__ == "__main__":
     # Command CLI parameters:
     #   sys.argv[1]: Path to input Types.h
@@ -118,4 +128,11 @@ if __name__ == "__main__":
     input_types_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("src/Types.h")
     output_destination_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("include")
 
-    generate_and_deploy(input_types_path, output_destination_dir)
+    #
+    # The exit code lives here rather than inside generate_and_deploy, which
+    # used to sys.exit() from three places. A caller that imports this module
+    # should get a return value, not have its own process killed.
+    #
+    sys.exit(
+        0 if generate_and_deploy(input_types_path, output_destination_dir) else 1
+    )
