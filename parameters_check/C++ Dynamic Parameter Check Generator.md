@@ -74,6 +74,42 @@ $ python generate_parameter_check.py test/include/Types.h test/output
     * Includes CheckTraits.h from: '../include/CheckTraits.h'
 ```
 
+Run it again and steps 2 and 4 find their own output already in place, so they
+leave it alone:
+
+```text
+$ python generate_parameter_check.py test/include/Types.h test/output
+--> Validating test\include\Types.h...
+--> Types validation passed.
+--> CheckTraits.h already up to date, left alone: test\include\CheckTraits.h
+--> Already up to date, left alone: test\output\ParameterCheck.h
+    * Includes Types.h from: '../include/Types.h'
+    * Includes CheckTraits.h from: '../include/CheckTraits.h'
+```
+
+Not an optimisation of the render — the render is cheap and still happens. It
+is the **write** that costs: rewriting a header with identical content moves
+its mtime, and every translation unit that includes `ParameterCheck.h` then
+recompiles. Called from `trace_injector`, which runs the generator before every
+sweep, that would be a full rebuild per sweep.
+
+Note what is *not* skipped. Step 1 runs every time, so a `Types.h` that has
+grown a new unprepared type is still rejected even though a `ParameterCheck.h`
+sits in the output directory:
+
+```text
+$ python generate_parameter_check.py test/include/TypesInvalid.h test/output
+--> Validating test\include\TypesInvalid.h...
+[Validation Failed] Enum 'ActionType' in TypesInvalid.h lacks 'check_traits<ActionType>' specialization.
+$ echo $?
+1
+```
+
+Skipping the whole script when the output file exists would look like the same
+saving and is not: "it exists" says nothing about *which* `Types.h` it was
+generated against, and callers rely on step 1's verdict to abort before they
+write anything of their own. Only the write is conditional.
+
 ### 2. Rejected Runs and `--force`
 
 Point the script at `TypesInvalid.h` and it stops at step 1. Note what is

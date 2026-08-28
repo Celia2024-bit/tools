@@ -139,6 +139,22 @@ The generator is the sibling `parameters_check` tool, used as a library and
 found next to this one. It needs `jinja2` — the only dependency on this path,
 and only on this path.
 
+It runs before every sweep, but it only *writes* when the result differs from
+what is already there:
+
+```
+⚙️ Generating ParameterCheck.h from: test\include\Types.h
+   --> CheckTraits.h already up to date, left alone: test\include\CheckTraits.h
+   --> Already up to date, left alone: test\include\ParameterCheck.h
+```
+
+That matters because a header rewritten with identical content still moves its
+mtime, and everything that includes `ParameterCheck.h` would recompile on every
+run of a tool whose whole job is to run over the whole tree. The validation of
+`Types.h` is *not* skipped — the gate above still closes on a `Types.h` that has
+since grown an unprepared type, even with a `ParameterCheck.h` already sitting
+in place.
+
 Neither key means anything to a `remove` run, or to a `trace`-only inject.
 Neither has any use for a `Types.h`, so neither is asked for one.
 
@@ -332,8 +348,11 @@ is the only way to reach the pre-flight — a rejected `Types.h` exits non-zero
 with the fixture trees byte-identical. `test/include/Types.h` and
 `TypesUnprepared.h` are that pair; the accepted run goes first and has to
 change something, or "modified nothing" would pass for a rule that matched
-nothing. These are the only checks here that need `jinja2`, and they skip
-rather than fail without it.
+nothing. The accepted one then runs a second time over its own output, and both
+generated headers must come out with their mtime untouched — asserted on mtime
+rather than content, since comparing content would pass for a rewrite, which is
+the thing being ruled out. These are the only checks here that need `jinja2`,
+and they skip rather than fail without it.
 
 Inject scenarios:
 
