@@ -187,6 +187,9 @@ for the name `check_traits<T>` on its own. Merely calling
 `check_traits<T>::check(...)` somewhere in the file does not make `T` prepared,
 and used to be miscounted as if it did.
 
+Comments are stripped before any of this runs, so prose about your types cannot
+fail validation and a commented-out `isValid()` does not count as one.
+
 Being regex-based, it has limits worth knowing: it only reads the one file it is
 given, and it decides whether a type has `isValid()` by looking inside the
 braces that follow its name. A type with an unusual body (a nested type, a `= {}`

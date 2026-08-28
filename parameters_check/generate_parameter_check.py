@@ -8,6 +8,32 @@ from pathlib import Path
 from jinja2 import Template
 
 #
+# Code, not prose. Every pattern below is looking for a declaration, and a
+# comment is neither -- but it is made of the same words, so a sentence like
+#
+#     // An enum cannot carry isValid(), so it is prepared from the outside.
+#
+# used to be read as declaring an enum named "cannot" and reported as an
+# unprepared type. Documenting your types should not fail validation.
+#
+COMMENT_RE = re.compile(
+    r'//[^\n]*|/\*.*?\*/',
+    re.DOTALL
+)
+
+
+def strip_comments(content: str) -> str:
+    """
+    Blank out comments, keeping the line structure. A block comment's newlines
+    are preserved so whatever sat on either side of it stays separated.
+    """
+
+    return COMMENT_RE.sub(
+        lambda match: "\n" * match.group(0).count("\n"),
+        content
+    )
+
+#
 # A specialization, not a use. "struct check_traits<ActionType>" prepares the
 # type; "check_traits<ActionType>::check(type_)" only calls whatever is there,
 # and matching the bare name counted the call as if it were the definition --
@@ -37,7 +63,9 @@ def check_types_header(types_path: Path) -> bool:
         print(f"[Error] Target Types header not found at: {types_path}")
         return False
 
-    content = types_path.read_text(encoding='utf-8')
+    content = strip_comments(
+        types_path.read_text(encoding='utf-8')
+    )
 
     struct_matches = re.findall(r'(?:struct|class)\s+([A-Za-z0-9_]+)', content)
     enum_matches = re.findall(r'enum\s+(?:class\s+)?([A-Za-z0-9_]+)', content)
