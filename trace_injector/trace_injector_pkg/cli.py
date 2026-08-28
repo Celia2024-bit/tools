@@ -19,6 +19,11 @@ def cleanup_logs():
 
 
 def main():
+    """
+    Returns the process exit code: 0 for a run that did what it was asked,
+    non-zero for one that refused. A build step invoking this needs to be able
+    to tell those apart without reading the log.
+    """
 
     parser = argparse.ArgumentParser()
 
@@ -113,3 +118,5 @@ def main():
     )
 
     logger.close()
+
+    return 0
