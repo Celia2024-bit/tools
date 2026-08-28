@@ -32,6 +32,14 @@ def check_types_header(types_path: Path) -> bool:
         if struct_name in ['check_traits', 'std']:
             continue
 
+        # "enum class ActionType" also matches the struct/class pattern above.
+        # Left in, it reports one unprepared enum twice under two different
+        # explanations, and the struct-side one is the misleading of the two:
+        # it suggests adding isValid() to an enum. The enum loop below covers
+        # these correctly.
+        if struct_name in enum_matches:
+            continue
+
         struct_pattern = rf'(?:struct|class)\s+{struct_name}\s*\{{(.*?)\}};'
         match = re.search(struct_pattern, content, re.DOTALL)
 
