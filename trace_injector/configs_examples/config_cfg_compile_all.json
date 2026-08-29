@@ -1,0 +1,7 @@
+{
+    "inject": [
+        { "directory": "test/src",      "file": "", "function": "", "inject_type": ["trace", "validate", "guard"] },
+        { "directory": "test/proj/src", "file": "", "function": "", "inject_type": ["trace", "validate", "guard"] }
+    ],
+    "include_dirs": [ "test/proj/include" ]
+}

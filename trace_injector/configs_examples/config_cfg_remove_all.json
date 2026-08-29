@@ -1,0 +1,6 @@
+{
+    "remove": [
+        { "directory": "test/src",      "file": "", "function": "" },
+        { "directory": "test/proj/src", "file": "", "function": "" }
+    ]
+}
