@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeSystem Tools — C++ developer toolkit</title>
+<meta name="description" content="Four tools built around a C++ trading system: trace injection, state machine code generation, interface synchronisation, and real-time performance monitoring.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">TS</span>
+      TradeSystem Tools
+      <span class="brand-sub">/ developer toolkit</span>
+    </a>
+    <nav class="topnav">
+      <a href="index.html" aria-current="page">Overview</a>
+      <a href="trace-injector.html">Trace Injector</a>
+      <a href="state-machine.html">State Machine</a>
+      <a href="interface-sync.html">Interface Sync</a>
+      <a href="performance-monitor.html">Performance Monitor</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <div class="eyebrow">Four tools · one C++ trading system</div>
+    <h1>Tooling for the parts of C++ that nobody wants to do by hand.</h1>
+    <p class="lede">
+      Each of these came out of the same place: a repetitive, error-prone job in a real C++ codebase
+      that was easier to automate than to keep doing carefully. Instrumenting function bodies,
+      keeping a state machine and its code in step, chasing every override after an interface changes,
+      and watching for the leaks that only show up hours in.
+    </p>
+    <div class="pill-row">
+      <span class="pill">Python</span>
+      <span class="pill">libclang / AST</span>
+      <span class="pill">Jinja2</span>
+      <span class="pill">C++17</span>
+      <span class="pill">Mermaid.js</span>
+      <span class="pill">Docker</span>
+      <span class="pill">CI / CD</span>
+    </div>
+  </section>
+
+  <section class="cards">
+
+    <a class="card" data-tool="trace" href="trace-injector.html">
+      <div class="card-kicker">Instrumentation</div>
+      <h2>Trace Injector</h2>
+      <p>
+        Inserts — and cleanly strips — a <code>ScopeTrace</code> guard, a parameter check, or a
+        <code>try</code>/<code>catch</code> into C++ function bodies. Function boundaries come from
+        libclang's AST, not regex, so overloads and multi-line signatures survive. Every injected
+        line carries a marker, so <code>remove</code> gives the file back byte for byte.
+      </p>
+      <div class="card-stack">Python · libclang · JSON config · self-testing suite</div>
+      <div class="card-go">Read the docs →</div>
+    </a>
+
+    <a class="card" data-tool="state" href="state-machine.html">
+      <div class="card-kicker">Code generation</div>
+      <h2>State Machine Toolkit</h2>
+      <p>
+        A Markdown table is the single source of truth. The toolchain validates the transition logic
+        (dead states, orphans, conflicting rules), exports JSON, generates the full C++ state machine
+        through Jinja2 templates, and renders an interactive Mermaid diagram of the same spec.
+      </p>
+      <div class="card-stack">Python · Jinja2 · Mermaid.js · C++17</div>
+      <div class="card-go">Read the docs →</div>
+    </a>
+
+    <a class="card" data-tool="sync" href="interface-sync.html">
+      <div class="card-kicker">Refactoring</div>
+      <h2>Interface Sync</h2>
+      <p>
+        Diffs an old interface against a new one, then walks every derived class header and updates it:
+        obsolete <code>override</code> specifiers come off, new override stubs go on. It never deletes
+        your declarations — the change is made visible, not decided for you.
+      </p>
+      <div class="card-stack">Python · Clang AST · header-tree scan</div>
+      <div class="card-go">Read the docs →</div>
+    </a>
+
+    <a class="card" data-tool="monitor" href="performance-monitor.html">
+      <div class="card-kicker">Observability</div>
+      <h2>Real-time Performance Monitor</h2>
+      <p>
+        Samples memory, thread count, handle count and context switches, then runs linear regression
+        over the trend instead of comparing against a threshold. Wired into CI/CD, a statistically
+        significant upward slope blocks the merge. Live dashboard, no setup.
+      </p>
+      <div class="card-stack">Python · JavaScript · Docker · Vercel · GitHub Actions</div>
+      <div class="card-go">Read the story →</div>
+    </a>
+
+  </section>
+
+  <section class="index-note">
+    <p>
+      <strong>How to read these pages.</strong> Each tool has its own page with its own accent colour,
+      and each one is self-contained — the config format, the exact commands, what the output looks
+      like, and the limitations worth knowing before you point it at a real tree. Three of the four are
+      documented straight from their <code>README</code>; the performance monitor page tells the story
+      of why it exists, and links to a live dashboard you can open right now.
+    </p>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <span>TradeSystem Tools</span>
+    <span class="sep">·</span>
+    <a href="https://github.com/Celia2024-bit/tools.git" target="_blank" rel="noopener">GitHub</a>
+    <span class="sep">·</span>
+    <a href="https://tools-lime-eight.vercel.app" target="_blank" rel="noopener">Live monitor dashboard</a>
+  </div>
+</footer>
+
+</body>
+</html>

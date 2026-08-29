@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real-time Performance Monitor — TradeSystem Tools</title>
+<meta name="description" content="Samples memory, thread count, handle count and context switches, then runs linear regression over the trend. A rising slope blocks the merge.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-tool="monitor">
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">TS</span>
+      TradeSystem Tools
+      <span class="brand-sub">/ developer toolkit</span>
+    </a>
+    <nav class="topnav">
+      <a href="index.html">Overview</a>
+      <a href="trace-injector.html">Trace Injector</a>
+      <a href="state-machine.html">State Machine</a>
+      <a href="interface-sync.html">Interface Sync</a>
+      <a href="performance-monitor.html" aria-current="page">Performance Monitor</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <article class="story-page">
+
+<!-- ==========================================================
+     Content below is reproduced verbatim from
+     portfolio/sections/monitor.html. The media it references was
+     copied alongside it into site/images/, so the paths are
+     unchanged too.
+     ========================================================== -->
+
+<div class="section-label">Side Project</div>
+<div class="project-header">
+  <h2>Real-time Performance Monitor</h2>
+  <div class="project-links">
+    <a href="https://github.com/Celia2024-bit/tools.git" target="_blank" class="project-link">GitHub →</a>
+    <a href="https://tools-lime-eight.vercel.app" target="_blank" class="project-link">Live Demo →</a>
+  </div>
+</div>
+<div class="project-stack">Python · JavaScript · Docker · Vercel · GitHub Actions</div>
+<div class="project-story">
+  <p>This tool came from a frustration I kept running into. In my own C++ trading system and on the IEC 61850 platform at work, some of the worst bugs are completely silent — they don't crash anything right away. Memory creeps up, thread count grows, handles never get released. Hours later the system falls over, and you have no idea why. <strong>Happy path tests are too short to catch this. They run for a few seconds and move on.</strong></p>
+
+  <p>The key insight: <strong>watch the trend, not just the threshold.</strong> A slope is a problem. So I built a monitor that samples memory, thread count, handle count, and context switches every N seconds — aggregates them into trend points — then runs linear regression to detect upward slope. Integrated into CI/CD, if any metric shows a statistically significant upward trend, <strong>the pipeline automatically blocks the merge.</strong></p>
+
+  <p>I also wanted it to be zero-friction for the team — there's a live web dashboard where anyone can check real-time system health just by opening a link. No setup, no SSH, no tooling.</p>
+
+  <!-- Live demo video -->
+  <div class="monitor-demo-inner">
+    <div class="monitor-video-block">
+      <div class="monitor-video-label">Windows</div>
+      <video
+        src="images/live_monitor_windows.mp4"
+        poster="images/live_monitor.png"
+        controls
+        muted
+        loop
+        playsinline
+      ></video>
+    </div>
+
+    <div class="monitor-video-block">
+      <div class="monitor-video-label">Linux</div>
+      <video
+        src="images/live_monitor_linux.mp4"
+        poster="images/live_monitor.png"
+        controls
+        muted
+        loop
+        playsinline
+      ></video>
+    </div>
+
+    <a href="https://tools-lime-eight.vercel.app" target="_blank" class="monitor-demo-link">
+      Open Live Dashboard →
+    </a>
+  </div>
+
+  <details class="monitor-explainer">
+    <summary>Why these metrics? ↓</summary>
+    <div class="monitor-explainer-body">
+      <div class="monitor-explainer-item">
+        <div class="monitor-explainer-label">Voluntary context switches</div>
+        <div class="monitor-explainer-desc">
+          A thread yields the CPU itself — waiting on a lock, a socket, or a condition variable.
+          A rising voluntary rate means <strong>more lock contention or blocking I/O</strong>:
+          threads are spending more time waiting for each other, even if CPU looks fine.
+        </div>
+      </div>
+      <div class="monitor-explainer-item">
+        <div class="monitor-explainer-label">Involuntary context switches</div>
+        <div class="monitor-explainer-desc">
+          The kernel forcibly preempts a thread because its time-slice expired.
+          A rising involuntary rate means the system is <strong>genuinely CPU-saturated</strong>
+          — more runnable work than cores to run it.
+        </div>
+      </div>
+      <div class="monitor-explainer-item">
+        <div class="monitor-explainer-label">Why not just watch CPU%?</div>
+        <div class="monitor-explainer-desc">
+          Instantaneous CPU% is too noisy. A 50 ms spike disappears between samples.
+          A thread holding a mutex for 200 ms barely registers as CPU usage at all.
+          <strong>The trend over time is what matters</strong> — a slow upward drift in
+          voluntary switches reveals a contention problem long before throughput visibly degrades.
+        </div>
+      </div>
+    </div>
+  </details>
+
+</div>
+
+<!-- ===================== end reproduced content ===================== -->
+
+    <nav class="pager">
+      <a href="interface-sync.html">← Interface Sync</a>
+      <a href="index.html">Overview →</a>
+    </nav>
+
+  </article>
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <span>TradeSystem Tools</span>
+    <span class="sep">·</span>
+    <a href="https://github.com/Celia2024-bit/tools.git" target="_blank" rel="noopener">GitHub</a>
+    <span class="sep">·</span>
+    <a href="https://tools-lime-eight.vercel.app" target="_blank" rel="noopener">Live dashboard</a>
+    <span class="sep">·</span>
+    <a href="index.html">All tools</a>
+  </div>
+</footer>
+
+</body>
+</html>

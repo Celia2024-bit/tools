@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interface Sync — TradeSystem Tools</title>
+<meta name="description" content="A Clang AST based utility that synchronizes derived class header files when a C++ interface evolves.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-tool="sync">
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">TS</span>
+      TradeSystem Tools
+      <span class="brand-sub">/ developer toolkit</span>
+    </a>
+    <nav class="topnav">
+      <a href="index.html">Overview</a>
+      <a href="trace-injector.html">Trace Injector</a>
+      <a href="state-machine.html">State Machine</a>
+      <a href="interface-sync.html" aria-current="page">Interface Sync</a>
+      <a href="performance-monitor.html">Performance Monitor</a>
+    </nav>
+  </div>
+</header>
+
+<div class="layout">
+
+  <aside class="toc">
+    <div class="toc-title">On this page</div>
+    <a href="#what">What is this tool</a>
+    <a href="#structure">Project structure</a>
+    <a href="#components">Components</a>
+    <a href="#walkthrough">Example walkthrough</a>
+    <a href="#diff" class="sub">Diff view</a>
+    <a href="#console" class="sub">Console output</a>
+    <a href="#summary" class="sub">Summary output</a>
+    <a href="#philosophy">Design philosophy</a>
+  </aside>
+
+  <article>
+
+    <div class="eyebrow">Refactoring · Python · Clang AST</div>
+    <h1>🔧 Interface Sync</h1>
+    <p class="lede">
+      A Clang AST based utility that synchronizes derived class header files when a C++ interface
+      evolves. Interface Sync only tracks <strong>pure virtual interface methods</strong>
+      (<code>= 0</code>). Non-pure virtual methods with default implementations are intentionally
+      ignored.
+    </p>
+
+    <dl class="facts">
+      <div class="fact"><dt>Parses via</dt><dd>Clang AST</dd></div>
+      <div class="fact"><dt>Tracks</dt><dd>pure virtuals only</dd></div>
+      <div class="fact"><dt>Scans</dt><dd>headers, recursively</dd></div>
+      <div class="fact"><dt>Never</dt><dd>deletes your declarations</dd></div>
+    </dl>
+
+    <h2 id="what">📌 What is this tool</h2>
+
+    <p>Interface Sync compares:</p>
+
+    <ul>
+      <li>🔹 An <strong>old</strong> interface definition</li>
+      <li>🔹 A <strong>new</strong> interface definition</li>
+    </ul>
+
+    <p>...and automatically updates derived class header files to match.</p>
+
+    <h3>Supported changes</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Change type</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td>➖ Removed</td><td>Interface method removed</td></tr>
+          <tr><td>➕ Added</td><td>Interface method added</td></tr>
+          <tr><td>🔁 Parameters</td><td>Method parameter changes</td></tr>
+          <tr><td>🔁 Return type</td><td>Method return type changes</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout good">
+      <span class="callout-label">Design guarantee</span>
+      <p>
+        The tool never deletes user declarations. Instead, it removes obsolete <code>override</code>
+        specifiers and appends new override stubs.
+      </p>
+    </div>
+
+    <h2 id="structure">🗂️ Project structure</h2>
+
+    <div class="code">
+      <div class="code-head"><span class="dot"></span>tree</div>
+<pre><code>sync_interface/
+│
+├── interface_sync.py
+├── logger.py
+│
+└── test/
+    │
+    ├── include/
+    │   ├── IObserver_old.h
+    │   └── IObserver.h
+    │
+    └── src/
+        ├── LoggerObserver.h
+        ├── NetworkObserver.h
+        │
+        ├── market/
+        │   ├── MarketObserver.h
+        │   └── MarketDataManager.h
+        │
+        └── strategy/
+            ├── StrategyObserver.h
+            ├── UnrelatedClass.h
+            │
+            └── alpha/
+                ├── AlphaObserver.h
+                └── AlphaEngine.h</code></pre>
+    </div>
+
+    <h2 id="components">🧩 Components</h2>
+
+    <h3><code>interface_sync.py</code> — main executable</h3>
+
+    <ul>
+      <li>Parse old interface</li>
+      <li>Parse new interface</li>
+      <li>Detect interface differences</li>
+      <li>Recursively scan source directories</li>
+      <li>Find classes derived from the target interface</li>
+      <li>Remove obsolete override specifiers</li>
+      <li>Append new override stubs</li>
+      <li>Generate summary report</li>
+      <li>Generate log file</li>
+    </ul>
+
+    <h3><code>logger.py</code> — logging utility</h3>
+
+    <ul>
+      <li>Output messages to terminal</li>
+      <li>Output messages to log file</li>
+      <li>Automatically create timestamped log files</li>
+      <li>Remove old log files before execution</li>
+    </ul>
+
+    <p>Example:</p>
+
+    <div class="code">
+      <div class="code-head"><span class="dot"></span>filename</div>
+<pre><code>interface_sync_20260825_171928.log</code></pre>
+    </div>
+
+    <h2 id="walkthrough">🚶 Example walkthrough</h2>
+
+    <p>The remainder of this document uses the sample project under <code>test/</code>.</p>
+
+    <ol class="steps">
+
+      <li>
+        <span class="step-title">Original interface — 📄 <code>test/include/IObserver_old.h</code></span>
+        <div class="code">
+          <div class="code-head"><span class="dot"></span>c++</div>
+<pre><code><b class="k">class</b> <b class="t">IObserver</b>
+{
+<b class="k">public</b>:
+
+    <b class="k">virtual</b> ~IObserver() = <b class="k">default</b>;
+
+    <b class="k">virtual void</b> OnConnected() = <b class="k">0</b>;
+
+    <b class="k">virtual void</b> OnData(<b class="k">int</b> id) = <b class="k">0</b>;
+};</code></pre>
+        </div>
+      </li>
+
+      <li>
+        <span class="step-title">Updated interface — 📄 <code>test/include/IObserver.h</code></span>
+        <div class="code">
+          <div class="code-head"><span class="dot"></span>c++</div>
+<pre><code><b class="k">class</b> <b class="t">IObserver</b>
+{
+<b class="k">public</b>:
+
+    <b class="k">virtual</b> ~IObserver() = <b class="k">default</b>;
+
+    <b class="k">virtual void</b> OnData(
+        <b class="k">int</b> id,
+        <b class="k">double</b> timestamp
+    ) = <b class="k">0</b>;
+
+    <b class="k">virtual void</b> OnError(
+        <b class="k">int</b> err_code
+    ) = <b class="k">0</b>;
+};</code></pre>
+        </div>
+
+        <p><strong>Detected changes</strong></p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Type</th><th>Method</th></tr></thead>
+            <tbody>
+              <tr><td>❌ Deleted</td><td><code>OnConnected()</code></td></tr>
+              <tr><td>🔁 Changed</td><td><code>OnData(int)</code> → <code>OnData(int, double)</code></td></tr>
+              <tr><td>✨ Added</td><td><code>OnError(int)</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </li>
+
+      <li>
+        <span class="step-title">Derived class, before vs. after sync — 📄 <code>test/src/LoggerObserver.h</code></span>
+        <div class="split">
+          <div class="code">
+            <div class="code-head"><span class="dot"></span><span class="no">❌ Before sync</span></div>
+<pre><code><b class="k">class</b> <b class="t">LoggerObserver</b> : <b class="k">public</b> IObserver
+{
+<b class="k">public</b>:
+
+    <b class="k">void</b> OnConnected() <b class="k">override</b>;
+
+    <b class="k">void</b> OnData(<b class="k">int</b> id) <b class="k">override</b>;
+};</code></pre>
+          </div>
+          <div class="code">
+            <div class="code-head"><span class="dot"></span><span class="ok">✅ After sync</span></div>
+<pre><code><b class="k">class</b> <b class="t">LoggerObserver</b> : <b class="k">public</b> IObserver
+{
+<b class="k">public</b>:
+
+    <b class="k">void</b> OnConnected();
+
+    <b class="k">void</b> OnData(<b class="k">int</b> id);
+
+    <b class="k">void</b> OnData(
+        <b class="k">int</b> id,
+        <b class="k">double</b> timestamp
+    ) <b class="k">override</b>;
+
+    <b class="k">void</b> OnError(
+        <b class="k">int</b> err_code
+    ) <b class="k">override</b>;
+};</code></pre>
+          </div>
+        </div>
+      </li>
+
+      <li>
+        <span class="step-title">Run Interface Sync</span>
+
+        <p><strong>macOS / Linux:</strong></p>
+        <div class="code">
+          <div class="code-head"><span class="dot"></span>bash</div>
+<pre><code>python3 interface_sync.py \
+    --old test/include/IObserver_old.h \
+    --new test/include/IObserver.h \
+    --src test/src</code></pre>
+        </div>
+
+        <p><strong>Windows:</strong></p>
+        <div class="code">
+          <div class="code-head"><span class="dot"></span>cmd</div>
+<pre><code>python interface_sync.py ^
+    --old test/include/IObserver_old.h ^
+    --new test/include/IObserver.h ^
+    --src test/src</code></pre>
+        </div>
+
+        <p><strong>Parameters</strong></p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Flag</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>--old</code></td><td>Original interface definition</td></tr>
+              <tr><td><code>--new</code></td><td>Updated interface definition</td></tr>
+              <tr><td><code>--src</code></td><td>Root directory containing derived classes</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>The tool recursively scans all header files under <code>test/src</code>, including nested folders.</p>
+      </li>
+
+      <li id="diff">
+        <span class="step-title">Diff view</span>
+        <div class="code">
+          <div class="code-head"><span class="dot"></span>diff</div>
+<pre><code><b class="del">- void OnConnected() override;</b>
+<b class="add">+ void OnConnected();</b>
+
+<b class="del">- void OnData(int id) override;</b>
+<b class="add">+ void OnData(int id);</b>
+
+<b class="add">+ void OnData(int id, double timestamp) override;</b>
+<b class="add">+</b>
+<b class="add">+ void OnError(int err_code) override;</b></code></pre>
+        </div>
+      </li>
+
+      <li id="console">
+        <span class="step-title">Console output</span>
+        <div class="code">
+          <div class="code-head"><span class="dot"></span>terminal</div>
+<pre><code>⚙️ Inspecting Derived Class file: test/src/LoggerObserver.h...
+
+   <b class="no">⚠️ [DELETED IN BASE]</b>
+   'void OnConnected()'
+      -&gt; remove override
+
+   <b class="no">⚠️ [PARAMS CHANGED]</b>
+   'void OnData(int id)'
+      -&gt; remove override
+      + 'void OnData(int id, double timestamp) override'
+
+   <b class="ok">✨ [NEW IN BASE]</b>
+   + 'void OnError(int err_code) override'</code></pre>
+        </div>
+      </li>
+
+      <li id="summary">
+        <span class="step-title">Summary output</span>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Metric</th><th>Count</th></tr></thead>
+            <tbody>
+              <tr><td>Headers Found</td><td>8</td></tr>
+              <tr><td>Derived Classes</td><td>5</td></tr>
+              <tr><td>Files Modified</td><td>5</td></tr>
+              <tr><td>Overrides Removed</td><td>10</td></tr>
+              <tr><td>Stubs Added</td><td>10</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </li>
+
+      <li>
+        <span class="step-title">Generated log file</span>
+        <p>A log file is generated automatically:</p>
+        <div class="code">
+          <div class="code-head"><span class="dot"></span>filename</div>
+<pre><code>interface_sync_20260825_171928.log</code></pre>
+        </div>
+        <p>The log file contains the same information displayed in the terminal.</p>
+      </li>
+
+    </ol>
+
+    <h2 id="philosophy">🎯 Design philosophy</h2>
+
+    <p>The tool never deletes user declarations.</p>
+
+    <p>When an interface method is removed or modified:</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Before</th><th>After</th></tr></thead>
+        <tbody>
+          <tr><td><code>void OnData(int id) override;</code></td><td><code>void OnData(int id);</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>The declaration remains available for manual refactoring.</p>
+
+    <p>
+      New interface methods are appended as <strong>override stubs</strong>, making required changes
+      immediately visible to developers.
+    </p>
+
+    <nav class="pager">
+      <a href="state-machine.html">← State Machine Toolkit</a>
+      <a href="performance-monitor.html">Real-time Performance Monitor →</a>
+    </nav>
+
+  </article>
+</div>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <span>TradeSystem Tools</span>
+    <span class="sep">·</span>
+    <a href="https://github.com/Celia2024-bit/tools.git" target="_blank" rel="noopener">GitHub</a>
+    <span class="sep">·</span>
+    <a href="index.html">All tools</a>
+  </div>
+</footer>
+
+</body>
+</html>
