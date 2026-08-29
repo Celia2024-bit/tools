@@ -27,7 +27,7 @@ DEFAULT_INJECT_TYPES = ["trace"]
 # Appended to every line the injector writes. Kept in one piece so a search for
 # it in a source tree finds every trace of this tool at once.
 #
-INJECT_MARKER = "// inject automatically"
+INJECT_MARKER = "// @autogen"
 
 
 def block_marker(kind):
