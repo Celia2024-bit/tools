@@ -1,0 +1,28 @@
+{
+    "remove": [
+        {
+            "directory": "test/src/strategy",
+            "file": "",
+            "base_class": "IStrategy",
+            "function": ""
+        },
+        {
+            "directory": "test/src/hot",
+            "file": "",
+            "base_class": "",
+            "function": ""
+        },
+        {
+            "directory": "test/src/risk",
+            "file": "RiskChecker.cpp",
+            "base_class": "",
+            "function": "CheckLimits"
+        },
+        {
+            "directory": "test/src/exec",
+            "file": "",
+            "base_class": "IExecutor",
+            "function": "Execute"
+        }
+    ]
+}

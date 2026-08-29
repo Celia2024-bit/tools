@@ -1,0 +1,48 @@
+{
+    "inject": [
+        {
+            "directory": "test/src/strategy",
+            "base_class": "IStrategy",
+            "inject_type": ["trace"]
+        },
+        {
+            "directory": "test/src/hot",
+            "file": "",
+            "base_class": "",
+            "function": "",
+            "inject_type": ["trace", "validate"]
+        },
+        {
+            "directory": "test/src/risk",
+            "file": "RiskChecker.cpp",
+            "base_class": "",
+            "function": "CheckLimits",
+            "inject_type": ["trace", "validate", "guard"]
+        },
+        {
+            "directory": "test/src/exec",
+            "file": "",
+            "base_class": "IExecutor",
+            "function": "Execute",
+            "inject_type": ["guard"]
+        }
+    ],
+
+    "exclude": [
+        {
+            "directory": "test/src/strategy",
+            "file": "StrategyEngine.cpp",
+            "function": "Run"
+        },
+        {
+            "directory": "test/src/hot",
+            "file": "AlphaEngine.cpp",
+            "function": ""
+        }
+    ],
+
+    "include_dirs": [
+        "test/src/strategy",
+        "test/proj/include"
+    ]
+}
