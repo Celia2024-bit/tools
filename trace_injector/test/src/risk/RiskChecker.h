@@ -10,10 +10,20 @@
 // parse (no sysroot is configured), and the base_class scenarios assert on the
 // absence of exactly that warning.
 //
+// The isValid() is not decoration. A `validate` injection passes this struct to
+// validate_params, and ParameterCheck.h refuses at compile time to validate a
+// type that declares no notion of validity — so without it, injecting into
+// Margin() produces code that does not compile. It is the one thing here that
+// only a real compiler notices; the suite itself never calls it.
 struct PriceBand
 {
     double low;
     double high;
+
+    bool isValid() const
+    {
+        return low <= high;
+    }
 };
 
 
