@@ -7,7 +7,7 @@ whatever inject can put in, remove can take back out.
 from clang import cindex
 
 from .class_hierarchy import is_or_derives_from, owning_class, qualified_name
-from .constants import injected_headers
+from .injection_rules import injected_headers
 from .file_discovery import match_function
 
 MAX_REPORTED_DIAGNOSTICS = 3

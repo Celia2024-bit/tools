@@ -18,7 +18,7 @@ their own headers and found the same way, through the project's `-I`.
 
 import re
 
-from .constants import (
+from .injection_rules import (
     INJECTION_KINDS,
     include_marker,
     kind_of_line

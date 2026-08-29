@@ -17,7 +17,7 @@ marker comment, so a hand-written ScopeTrace guard, or an #include somebody
 added themselves, survives a remove that walks right past it.
 """
 
-from .constants import is_block_end_line
+from .injection_rules import is_block_end_line
 from .includes import drop_orphan_includes
 from .line_utils import (
     find_open_brace_line,

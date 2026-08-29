@@ -1,4 +1,4 @@
-from .constants import build_injected_blocks, normalize_inject_types
+from .injection_rules import build_injected_blocks, normalize_inject_types
 from .includes import add_includes
 from .line_utils import (
     already_injected,

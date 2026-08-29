@@ -3,13 +3,13 @@ Finding injected code again by reading lines, once the AST has said which
 function to look at.
 
 Nothing here knows or cares which inject_type wrote a block: a line either
-carries the marker comment for one of the kinds in constants.INJECTION_KINDS or
+carries the marker comment for one of the kinds in injection_rules.INJECTION_KINDS or
 it does not. That is what lets remove restore a function to its original state
 without being told what was put there — and what keeps it off code the injector
 never wrote.
 """
 
-from .constants import kind_of_line
+from .injection_rules import kind_of_line
 
 #
 # How far past a function's opening brace an injected block is allowed to
