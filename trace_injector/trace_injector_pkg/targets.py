@@ -124,7 +124,15 @@ def iter_target_functions(
     by each caller, since the message is the same either way.
     """
 
+    main_file_path = str(tu.spelling)
+
     for node in tu.cursor.walk_preorder():
+        if not node.location or not node.location.file:
+            continue
+        if str(node.location.file) != main_file_path:
+            continue
+        # ---------------------------------------------------
+
         try:
             kind = node.kind
         except ValueError:
