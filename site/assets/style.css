@@ -631,7 +631,9 @@ tbody td code { white-space: nowrap; }
   color: var(--accent);
   white-space: nowrap;
 }
-.project-link:hover { text-decoration: none; background: rgba(74,222,128,.2); }
+/* accent-driven, not hard-coded green: these buttons now appear on the
+   trace / state / sync pages too, each with its own accent. */
+.project-link:hover { text-decoration: none; background: var(--accent-line); }
 
 .project-stack {
   font-family: var(--mono);
