@@ -7,6 +7,14 @@ import os
 import sys
 import numpy as np
 
+# This script prints emoji. When it runs as a child process on Windows it gets a
+# fresh stdout on the ANSI codepage (cp1252), where those characters raise
+# UnicodeEncodeError — killing the process before savefig() ever runs. Force
+# UTF-8 here so the script is safe no matter who launches it.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 
 def draw_raw_subplots(csv_file, output_name, title_prefix):
     """Raw 数据绘图：内存、句柄、上下文切换（3张子图）"""
