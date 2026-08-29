@@ -36,6 +36,15 @@ import csv
 import sys
 import os
 
+# This script prints emoji, and its exit code decides whether a merge is blocked.
+# On Windows stdout defaults to the ANSI codepage (cp1252), where those characters
+# raise UnicodeEncodeError — the gate would then exit 1 with a traceback instead of
+# a verdict, i.e. block the merge for the wrong reason. Force UTF-8 so the exit
+# code always reflects the actual performance result.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 # ── Default thresholds ───────────────────────────────────────────────────────
 DEFAULT_CTX_INVOL_LIMIT  = 500    # involuntary ctx switches/sec absolute ceiling
 DEFAULT_MEM_LIMIT        = 200.0  # MB
@@ -54,7 +63,10 @@ def load_trend_csv(path):
                     'timestamp':   row.get('timestamp', ''),
                     'ctx_vol':     float(row.get('avg_ctx_vol',   0)),
                     'ctx_invol':   float(row.get('avg_ctx_invol', 0)),
-                    'avg_memory':  float(row.get('avg_memory',    0)),
+                    # NOTE: the column is 'avg_mem' (see constants.TREND_COLUMNS),
+                    # not 'avg_memory' — getting this wrong silently defaults every
+                    # sample to 0, which makes both memory gates below always pass.
+                    'avg_memory':  float(row.get('avg_mem',       0)),
                     'avg_threads': float(row.get('avg_threads',   0)),
                     'avg_handles': float(row.get('avg_handles',   0)),
                 })
