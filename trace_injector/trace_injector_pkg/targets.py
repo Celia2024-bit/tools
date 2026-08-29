@@ -125,8 +125,11 @@ def iter_target_functions(
     """
 
     for node in tu.cursor.walk_preorder():
-
-        if node.kind not in FUNCTION_KINDS:
+        try:
+            kind = node.kind
+        except ValueError:
+            continue
+        if kind not in FUNCTION_KINDS:
             continue
 
         if not node.is_definition():
