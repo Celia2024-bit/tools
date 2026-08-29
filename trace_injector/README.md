@@ -74,13 +74,13 @@ The four filters are ANDed together. An empty (or absent) field means "no
 restriction on this dimension". Both modes accept all four: whatever an
 `inject` rule can put in, the same rule under `remove` takes back out.
 
-| Field | Meaning | Empty means |
-|---|---|---|
-| `directory` | Root to scan for `.cpp` files, recursively | current directory |
-| `file` | Only `.cpp` files with this exact name | every `.cpp` found |
-| `function` | Only functions with this exact name | every function |
-| `base_class` | Only methods of a class that IS this class or derives from it, at any depth | no hierarchy filter |
-| `inject_type` | *Not* a filter — **what** to insert. `inject` only | `["trace"]` |
+| Field         | Meaning                                                                     | Empty means         |
+| ------------- | --------------------------------------------------------------------------- | ------------------- |
+| `directory`   | Root to scan for `.cpp` files, recursively                                  | current directory   |
+| `file`        | Only `.cpp` files with this exact name                                      | every `.cpp` found  |
+| `function`    | Only functions with this exact name                                         | every function      |
+| `base_class`  | Only methods of a class that IS this class or derives from it, at any depth | no hierarchy filter |
+| `inject_type` | *Not* a filter — **what** to insert. `inject` only                          | `["trace"]`         |
 
 ### `inject_type`
 
@@ -94,11 +94,11 @@ directories can get different treatment:
 ]
 ```
 
-| Value | Writes |
-|---|---|
-| `trace` | the `ScopeTrace` guard |
+| Value      | Writes                                                      |
+| ---------- | ----------------------------------------------------------- |
+| `trace`    | the `ScopeTrace` guard                                      |
 | `validate` | a `__param_names[]` table and a `validate_params(...)` call |
-| `guard` | a `try` / `catch` around the body, reporting what it caught |
+| `guard`    | a `try` / `catch` around the body, reporting what it caught |
 
 #### `validate`
 
@@ -211,11 +211,11 @@ There is no config key for this and no path in it. The headers are named the
 way your own sources name their own headers, and they resolve the same way —
 through your build's `-I`. Nothing here goes looking for them on disk.
 
-| Kind | Header | Lives in |
-|---|---|---|
-| `trace` | `ScopeTrace.h` | the sibling `util` repo, `ScopeTrace/` |
+| Kind       | Header             | Lives in                                    |
+| ---------- | ------------------ | ------------------------------------------- |
+| `trace`    | `ScopeTrace.h`     | the sibling `util` repo, `ScopeTrace/`      |
 | `validate` | `ParameterCheck.h` | the sibling `util` repo, `Parameter_Check/` |
-| `guard` | `ErrorLogger.h` | the sibling `util` repo, at the top |
+| `guard`    | `ErrorLogger.h`    | the sibling `util` repo, at the top         |
 
 The `try`/`catch` a `guard` writes needs no header of its own — but its catch
 arms have to report the error *somewhere*, and `ErrorLogger::LogError` is where
@@ -441,17 +441,17 @@ reported first, because it is higher up the file.
 
 All under `configs_examples/`:
 
-| File | Shows |
-|---|---|
-| `config_inject_example.json` | inject with a function-level `exclude` |
-| `config_remove_example.json` | remove with a function-level `exclude` |
-| `config_base_class_example.json` | every `Run()` override under `IStrategy`, no `include_dirs` needed |
-| `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required |
-| `config_base_class_remove_example.json` | the exact undo of the one above — same fields, `inject` swapped for `remove` |
-| `config_inject_types_example.json` | two directories, a different `inject_type` for each — so one tree gets both includes and the other only `ScopeTrace.h` |
-| `config_inject_types_remove_example.json` | the undo of the one above — one unfiltered rule per tree, no `inject_type` needed |
-| `config_guard_example.json` | all three kinds over one tree, `guard` alone over another |
-| `config_guard_remove_example.json` | the undo of the one above |
+| File                                         | Shows                                                                                                                  |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `config_inject_example.json`                 | inject with a function-level `exclude`                                                                                 |
+| `config_remove_example.json`                 | remove with a function-level `exclude`                                                                                 |
+| `config_base_class_example.json`             | every `Run()` override under `IStrategy`, no `include_dirs` needed                                                     |
+| `config_base_class_includedirs_example.json` | every `Execute()` override under `IExecutor`, `include_dirs` required                                                  |
+| `config_base_class_remove_example.json`      | the exact undo of the one above — same fields, `inject` swapped for `remove`                                           |
+| `config_inject_types_example.json`           | two directories, a different `inject_type` for each — so one tree gets both includes and the other only `ScopeTrace.h` |
+| `config_inject_types_remove_example.json`    | the undo of the one above — one unfiltered rule per tree, no `inject_type` needed                                      |
+| `config_guard_example.json`                  | all three kinds over one tree, `guard` alone over another                                                              |
+| `config_guard_remove_example.json`           | the undo of the one above                                                                                              |
 
 ## Tests
 
@@ -622,3 +622,42 @@ whole point of the file.
 
 `TRACE_INJECTOR_LIBCLANG` works here exactly as it does for the tool, since it
 is the same locator.
+
+## Verification & Compilation Test (`verify_compile.py`)
+
+`verify_compile.py` is an end-to-end verification script. It applies the code injection, attempts to compile (and optionally execute) the target C++ files using `g++`, and automatically restores the Git workspace state afterwards.
+
+### Prerequisites
+
+- `g++` (supporting C++17) must be available in your `PATH`. 
+- Windows environment requiring Winsock socket API (the script automatically links `-lws2_32`).
+
+### Quick Start
+
+```bash
+# 1. Full compilation & binary execution (Default Mode)
+python tools/verify_compile.py
+
+# 2. Fast syntax-only validation (No linking or main.cpp required)
+python tools/verify_compile.py -s
+
+# 3. Interactive step-by-step mode (Pause after each step to inspect changes)
+python tools/verify_compile.py -i
+
+# 4. Custom config file and target source directory
+python tools/verify_compile.py -c configs_examples/config_inject_example.json -d test/src
+```
+
+### Execution Modes & Features
+
+- **Full Compilation & Execution (Default)**:
+  Compiles all `.cpp` files in the target directory (e.g., `test/src`) along with implementation dependencies under `util/` (excluding standalone test mains). If `main.cpp` exists in the target directory, it builds `test_runner` and executes it directly to verify runtime `ScopeTrace` outputs.
+
+- **Syntax Validation Mode (`-s` / `--syntax-only`)**:
+  Uses `g++ -fsyntax-only` to validate syntax, include paths, and type definitions without linking or generating binaries. This mode does not require a `main.cpp`.
+
+- **Interactive Mode (`-i` / `--interactive`)**:
+  Pauses the workflow after each step (`Inject` -> `Compile` -> `Execute` -> `Cleanup`). You can open and inspect the modified C++ source files in your editor during the injection step before proceeding to compilation.
+
+- **Automatic Cleanup**:
+  Regardless of success or failure, the script executes `git checkout` in its `finally` block to guarantee no dirty or injected code is left in your working tree.
