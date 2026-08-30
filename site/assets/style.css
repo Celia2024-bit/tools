@@ -36,7 +36,7 @@
 }
 
 /* per-tool accents */
-body[data-tool="trace"]     { --accent: #fbbf24; --accent-soft: rgba(251,191,36,.12);  --accent-line: rgba(251,191,36,.34); }
+body[data-tool="aspect"]     { --accent: #fbbf24; --accent-soft: rgba(251,191,36,.12);  --accent-line: rgba(251,191,36,.34); }
 body[data-tool="state"]     { --accent: #c084fc; --accent-soft: rgba(192,132,252,.12); --accent-line: rgba(192,132,252,.34); }
 body[data-tool="sync"]      { --accent: #38d6d6; --accent-soft: rgba(56,214,214,.12);  --accent-line: rgba(56,214,214,.34); }
 body[data-tool="monitor"]   { --accent: #4ade80; --accent-soft: rgba(74,222,128,.12);  --accent-line: rgba(74,222,128,.34); }
@@ -479,7 +479,7 @@ tbody td code { white-space: nowrap; }
   border-color: var(--accent-line);
   transform: translateY(-3px);
 }
-.card[data-tool="trace"]   { --accent: #fbbf24; --accent-soft: rgba(251,191,36,.12);  --accent-line: rgba(251,191,36,.36); }
+.card[data-tool="aspect"]   { --accent: #fbbf24; --accent-soft: rgba(251,191,36,.12);  --accent-line: rgba(251,191,36,.36); }
 .card[data-tool="state"]   { --accent: #c084fc; --accent-soft: rgba(192,132,252,.12); --accent-line: rgba(192,132,252,.36); }
 .card[data-tool="sync"]    { --accent: #38d6d6; --accent-soft: rgba(56,214,214,.12);  --accent-line: rgba(56,214,214,.36); }
 .card[data-tool="monitor"] { --accent: #4ade80; --accent-soft: rgba(74,222,128,.12);  --accent-line: rgba(74,222,128,.36); }

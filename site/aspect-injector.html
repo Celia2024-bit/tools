@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Trace Injector — TradeSystem Tools</title>
+<title>Aspect Injector — TradeSystem Tools</title>
 <meta name="description" content="Inserts or strips instrumentation in C++ function bodies — ScopeTrace guard, parameter check, try/catch — driven by config.json and libclang's AST.">
 <link rel="stylesheet" href="assets/style.css">
 </head>
-<body data-tool="trace">
+<body data-tool="aspect">
 
 <header class="topbar">
   <div class="topbar-inner">
@@ -18,7 +18,7 @@
     </a>
     <nav class="topnav">
       <a href="index.html">Overview</a>
-      <a href="trace-injector.html" aria-current="page">Trace Injector</a>
+      <a href="aspect-injector.html" aria-current="page">Aspect Injector</a>
       <a href="state-machine.html">State Machine</a>
       <a href="interface-sync.html">Interface Sync</a>
       <a href="performance-monitor.html">Performance Monitor</a>
@@ -49,7 +49,7 @@
   <article>
 
     <div class="eyebrow">Instrumentation · Python · libclang</div>
-    <h1>Trace Injector</h1>
+    <h1>C++ Aspect Injector</h1>
     <p class="lede">
       Inserts (or strips) instrumentation in C++ function bodies, driven by <code>config.json</code> —
       a <code>ScopeTrace</code> guard, a parameter check, a <code>try</code>/<code>catch</code> around
@@ -59,8 +59,8 @@
     </p>
 
     <div class="project-links" style="margin-bottom: 26px;">
-      <a href="https://github.com/Celia2024-bit/tools/tree/main/trace_injector" target="_blank" rel="noopener" class="project-link">Source on GitHub ↗</a>
-      <a href="https://github.com/Celia2024-bit/tools/blob/main/trace_injector/README.md" target="_blank" rel="noopener" class="project-link">README ↗</a>
+      <a href="https://github.com/Celia2024-bit/tools/tree/main/aspect_injector" target="_blank" rel="noopener" class="project-link">Source on GitHub ↗</a>
+      <a href="https://github.com/Celia2024-bit/tools/blob/main/aspect_injector/README.md" target="_blank" rel="noopener" class="project-link">README ↗</a>
     </div>
 
     <dl class="facts">
@@ -75,7 +75,7 @@
     <div class="code">
       <div class="code-head"><span class="dot"></span>shell</div>
 <pre><code>pip install libclang
-python trace_injector.py --config config.json</code></pre>
+python aspect_injector.py --config config.json</code></pre>
     </div>
 
     <p>
@@ -88,7 +88,7 @@ python trace_injector.py --config config.json</code></pre>
 
     <div class="code">
       <div class="code-head"><span class="dot"></span>output</div>
-<pre><code>Trace Injector v1.2
+<pre><code>C++ Aspect Injector v1.2
 Mode: inject
 libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
     </div>
@@ -97,7 +97,7 @@ libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
 
     <div class="code">
       <div class="code-head"><span class="dot"></span>shell</div>
-<pre><code>TRACE_INJECTOR_LIBCLANG=/opt/llvm/lib/libclang.so python trace_injector.py --config config.json</code></pre>
+<pre><code>ASPECT_INJECTOR_LIBCLANG=/opt/llvm/lib/libclang.so python aspect_injector.py --config config.json</code></pre>
     </div>
 
     <p>
@@ -837,7 +837,7 @@ inject -&gt; remove -&gt; inject  == what the first inject produced</code></pre>
       <p>
         Append to <code>SCENARIOS</code>; the accepted keys are documented just above the list. If a
         change of yours makes an existing scenario fail, read the diff it prints before editing the
-        expectation — that diff is the whole point of the file. <code>TRACE_INJECTOR_LIBCLANG</code>
+        expectation — that diff is the whole point of the file. <code>ASPECT_INJECTOR_LIBCLANG</code>
         works here exactly as it does for the tool, since it is the same locator.
       </p>
     </div>

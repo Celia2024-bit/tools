@@ -15,7 +15,7 @@ import os
 import sys
 from pathlib import Path
 
-ENV_VAR = "TRACE_INJECTOR_LIBCLANG"
+ENV_VAR = "ASPECT_INJECTOR_LIBCLANG"
 
 #
 # Where a working install actually puts it, most likely first. The pip wheel is

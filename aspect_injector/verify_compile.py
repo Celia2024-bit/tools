@@ -16,8 +16,8 @@ PROJECT_ROOT = ROOT.parent   # C:\workspace\Personals\TradeSystem
 
 sys.path.insert(0, str(ROOT))
 
-from trace_injector_pkg.cli import main as cli_main
-from trace_injector_pkg.libclang import configure as configure_libclang
+from aspect_injector_pkg.cli import main as cli_main
+from aspect_injector_pkg.libclang import configure as configure_libclang
 
 # Ensure libclang is configured properly
 configure_libclang()
@@ -85,7 +85,7 @@ def run_injection(config_path, interactive=False):
         raise FileNotFoundError(f"Config file not found: {config_path}")
         
     print(f"--> [Step 1] Applying injection config: {config_path.name}")
-    sys.argv = ["trace_injector.py", "--config", str(config_path)]
+    sys.argv = ["aspect_injector.py", "--config", str(config_path)]
     exit_code = cli_main()
     if exit_code != 0:
         raise RuntimeError(f"Injection failed with exit code: {exit_code}")

@@ -2,5 +2,5 @@
 __pycache__/
 *.pyc
 
-# trace_injector writes one log per run, into whatever directory it ran from
-trace_injector_*.log
+# aspect_injector writes one log per run, into whatever directory it ran from
+aspect_injector_*.log

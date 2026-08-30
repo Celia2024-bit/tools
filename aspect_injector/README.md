@@ -1,4 +1,4 @@
-# Trace Injector
+# Aspect Injector
 
 Inserts (or strips) instrumentation in C++ function bodies, driven by
 `config.json` — a `ScopeTrace` guard, a parameter check, a `try`/`catch` around
@@ -8,7 +8,7 @@ signatures are handled correctly.
 
 ```
 pip install libclang
-python trace_injector.py --config config.json
+python aspect_injector.py --config config.json
 ```
 
 That is the whole install. The tool locates the shared library itself, because
@@ -19,7 +19,7 @@ looking, since "which libclang answered" is the first thing worth knowing when a
 `base_class` rule matches nothing:
 
 ```
-Trace Injector v1.2
+Aspect Injector v1.2
 Mode: inject
 libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll
 ```
@@ -28,7 +28,7 @@ If yours lives somewhere the search does not cover, name it and the search is
 skipped entirely:
 
 ```
-TRACE_INJECTOR_LIBCLANG=/opt/llvm/lib/libclang.so python trace_injector.py --config config.json
+ASPECT_INJECTOR_LIBCLANG=/opt/llvm/lib/libclang.so python aspect_injector.py --config config.json
 ```
 
 Log lines name each function by its fully qualified name, so overrides that
@@ -620,7 +620,7 @@ just above the list. If a change of yours makes an existing scenario fail,
 read the diff it prints before editing the expectation — that diff is the
 whole point of the file.
 
-`TRACE_INJECTOR_LIBCLANG` works here exactly as it does for the tool, since it
+`ASPECT_INJECTOR_LIBCLANG` works here exactly as it does for the tool, since it
 is the same locator.
 
 ## Verification & Compilation Test (`verify_compile.py`)

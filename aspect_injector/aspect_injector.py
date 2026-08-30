@@ -2,7 +2,7 @@
 
 import sys
 
-from trace_injector_pkg.cli import main
+from aspect_injector_pkg.cli import main
 
 if __name__ == "__main__":
     sys.exit(main())

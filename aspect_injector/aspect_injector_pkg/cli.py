@@ -11,7 +11,7 @@ from .processor import process_rule
 def cleanup_logs():
 
     for file in Path.cwd().glob(
-        "trace_injector_*.log"
+        "aspect_injector_*.log"
     ):
         try:
             file.unlink()
@@ -66,7 +66,7 @@ def main():
     )
 
     logger.log(
-        "Trace Injector v1.2"
+        "C++ Aspect Injector v1.2"
     )
 
     logger.log(

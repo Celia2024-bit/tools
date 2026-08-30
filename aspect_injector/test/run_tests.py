@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-The regression check for trace_injector. Change anything, then run:
+The regression check for aspect_injector. Change anything, then run:
 
     python test/run_tests.py
 
@@ -36,7 +36,7 @@ of this file — read the diff it prints before editing the expectation.
 
 If libclang cannot be found automatically, point at it:
 
-    TRACE_INJECTOR_LIBCLANG=C:/Python/Lib/site-packages/clang/native/libclang.dll \
+    ASPECT_INJECTOR_LIBCLANG=C:/Python/Lib/site-packages/clang/native/libclang.dll \
         python test/run_tests.py
 """
 
@@ -68,17 +68,17 @@ sys.stdout.reconfigure(
 # way of finding libclang — and then it would be testing the tool while relying
 # on a search path the tool does not use.
 #
-from trace_injector_pkg.libclang import configure as configure_libclang
+from aspect_injector_pkg.libclang import configure as configure_libclang
 
 LIBCLANG_IN_USE = configure_libclang()
 
-from trace_injector_pkg import targets
-from trace_injector_pkg.cli import cleanup_logs, main as cli_main
-from trace_injector_pkg.config import (
+from aspect_injector_pkg import targets
+from aspect_injector_pkg.cli import cleanup_logs, main as cli_main
+from aspect_injector_pkg.config import (
     load_config,
     resolve_mode_and_rules
 )
-from trace_injector_pkg.processor import process_rule
+from aspect_injector_pkg.processor import process_rule
 
 INJECTED_PREFIX = "   ✨ Injected: "
 REMOVED_PREFIX = "   ✨ Removed: "
@@ -1425,7 +1425,7 @@ def run_cli(config):
     argv = sys.argv
 
     sys.argv = [
-        "trace_injector.py",
+        "aspect_injector.py",
         "--config",
         str(config_file)
     ]
@@ -1915,7 +1915,7 @@ def run_all_scenarios(saved, report=None):
 def patch_remove_ignores_filters():
     """Make every remove take the coarse whole-file path."""
 
-    from trace_injector_pkg import processor
+    from aspect_injector_pkg import processor
 
     original = processor.remove_trace_from_file
 
@@ -1938,7 +1938,7 @@ def patch_remove_ignores_validate():
     so something had better go red.
     """
 
-    from trace_injector_pkg import line_utils
+    from aspect_injector_pkg import line_utils
 
     original = line_utils.kind_of_line
 
@@ -1970,9 +1970,9 @@ def patch_validate_drops_last_argument():
     the RiskChecker arities that make it show up.
     """
 
-    from trace_injector_pkg import constants
+    from aspect_injector_pkg import injection_rules
 
-    original = constants.INJECTION_KINDS
+    original = injection_rules.INJECTION_KINDS
 
     def truncated(func_name, param_names):
 
@@ -2030,8 +2030,8 @@ def patch_claims_every_kind_asked_for():
     their function has no parameters.
     """
 
-    from trace_injector_pkg import injector
-    from trace_injector_pkg.constants import normalize_inject_types
+    from aspect_injector_pkg import injector
+    from aspect_injector_pkg.constants import normalize_inject_types
 
     original = injector.build_injected_blocks
 
@@ -2075,7 +2075,7 @@ def patch_include_never_added():
     only check_include_consistency says so.
     """
 
-    from trace_injector_pkg import injector
+    from aspect_injector_pkg import injector
 
     original = injector.add_includes
 
@@ -2100,7 +2100,7 @@ def patch_include_never_removed():
     any use for it. The byte-exact round trips are what refuse to accept it.
     """
 
-    from trace_injector_pkg import remover
+    from aspect_injector_pkg import remover
 
     original = remover.drop_orphan_includes
 
@@ -2148,7 +2148,7 @@ def patch_guard_never_closes():
     runs after every scenario and mid-round-trip rather than being opted into.
     """
 
-    from trace_injector_pkg import constants
+    from aspect_injector_pkg import constants
 
     original = constants.INJECTION_KINDS
 
@@ -2184,7 +2184,7 @@ def patch_guard_swallows_the_exception():
     that says check_guard_blocks earns its keep.
     """
 
-    from trace_injector_pkg import constants
+    from aspect_injector_pkg import constants
 
     original = constants.INJECTION_KINDS
 
@@ -2223,7 +2223,7 @@ def patch_targeted_remove_only_looks_at_the_top():
     a file that no longer compiles, reported as a successful remove.
     """
 
-    from trace_injector_pkg import line_utils, remover
+    from aspect_injector_pkg import line_utils, remover
 
     original = remover.injected_runs
 

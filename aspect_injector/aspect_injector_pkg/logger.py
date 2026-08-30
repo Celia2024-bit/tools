@@ -35,7 +35,7 @@ class Logger:
         )
 
         self.log_file = (
-            f"trace_injector_{timestamp}.log"
+            f"aspect_injector_{timestamp}.log"
         )
 
         self.fp = open(
