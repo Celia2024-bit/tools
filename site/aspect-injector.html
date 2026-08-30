@@ -256,21 +256,21 @@ libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
     <b class="k">int</b> order_id
 )
 {
-    <b class="k">try</b>  <b class="c">// inject automatically: guard</b>
-    {  <b class="c">// inject automatically: guard</b>
+    <b class="k">try</b>  <b class="c">//  @autogen: guard</b>
+    {  <b class="c">//  @autogen: guard</b>
 
     <b class="k">return true</b>;
-    }  <b class="c">// inject automatically: end of guard</b>
-    <b class="k">catch</b> (<b class="k">const</b> std::exception&amp; error)  <b class="c">// inject automatically: end of guard</b>
-    {  <b class="c">// inject automatically: end of guard</b>
-        ErrorLogger::LogError(<b class="s">"OrderMgr"</b>, <b class="s">"SubmitOrder"</b>, <b class="s">"std::exception"</b>, error.what());  <b class="c">// inject automatically: end of guard</b>
-        <b class="k">throw</b>;  <b class="c">// inject automatically: end of guard</b>
-    }  <b class="c">// inject automatically: end of guard</b>
-    <b class="k">catch</b> (...)  <b class="c">// inject automatically: end of guard</b>
-    {  <b class="c">// inject automatically: end of guard</b>
-        ErrorLogger::LogError(<b class="s">"OrderMgr"</b>, <b class="s">"SubmitOrder"</b>, <b class="s">"unknown"</b>, <b class="s">"unrecognised exception"</b>);  <b class="c">// inject automatically: end of guard</b>
-        <b class="k">throw</b>;  <b class="c">// inject automatically: end of guard</b>
-    }  <b class="c">// inject automatically: end of guard</b>
+    }  <b class="c">//  @autogen: end of guard</b>
+    <b class="k">catch</b> (<b class="k">const</b> std::exception&amp; error)  <b class="c">//  @autogen: end of guard</b>
+    {  <b class="c">//  @autogen: end of guard</b>
+        ErrorLogger::LogError(<b class="s">"OrderMgr"</b>, <b class="s">"SubmitOrder"</b>, <b class="s">"std::exception"</b>, error.what());  <b class="c">//  @autogen: end of guard</b>
+        <b class="k">throw</b>;  <b class="c">//  @autogen: end of guard</b>
+    }  <b class="c">//  @autogen: end of guard</b>
+    <b class="k">catch</b> (...)  <b class="c">//  @autogen: end of guard</b>
+    {  <b class="c">//  @autogen: end of guard</b>
+        ErrorLogger::LogError(<b class="s">"OrderMgr"</b>, <b class="s">"SubmitOrder"</b>, <b class="s">"unknown"</b>, <b class="s">"unrecognised exception"</b>);  <b class="c">//  @autogen: end of guard</b>
+        <b class="k">throw</b>;  <b class="c">//  @autogen: end of guard</b>
+    }  <b class="c">//  @autogen: end of guard</b>
 }</code></pre>
     </div>
 
@@ -314,9 +314,9 @@ libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
     <div class="code">
       <div class="code-head"><span class="dot"></span>c++</div>
 <pre><code><b class="k">#include</b> <b class="s">"RiskChecker.h"</b>
-<b class="k">#include</b> <b class="s">"ScopeTrace.h"</b>  <b class="c">// inject automatically: include for trace</b>
-<b class="k">#include</b> <b class="s">"ParameterCheck.h"</b>  <b class="c">// inject automatically: include for validate</b>
-<b class="k">#include</b> <b class="s">"ErrorLogger.h"</b>  <b class="c">// inject automatically: include for guard</b></code></pre>
+<b class="k">#include</b> <b class="s">"ScopeTrace.h"</b>  <b class="c">//  @autogen: include for trace</b>
+<b class="k">#include</b> <b class="s">"ParameterCheck.h"</b>  <b class="c">//  @autogen: include for validate</b>
+<b class="k">#include</b> <b class="s">"ErrorLogger.h"</b>  <b class="c">//  @autogen: include for guard</b></code></pre>
     </div>
 
     <p>
@@ -432,7 +432,7 @@ Includes Gone  : 0</code></pre>
 
     <div class="code">
       <div class="code-head"><span class="dot"></span>c++</div>
-<pre><code>    ScopeTrace trace(  <b class="c">// inject automatically: trace</b></code></pre>
+<pre><code>    ScopeTrace trace(  <b class="c">//  @autogen: trace</b></code></pre>
     </div>
 
     <p>
@@ -499,7 +499,7 @@ Includes Gone  : 0</code></pre>
 
     <p>
       Adding a new injection kind does not require touching <code>remove</code>, or the include handling
-      either. A kind is one entry in <code>INJECTION_KINDS</code> (<code>constants.py</code>) — its name,
+      either. A kind is one entry in <code>INJECTION_KINDS</code> (<code>injection_rules.py</code>) — its name,
       the function that writes it, the header it needs — and everything else reads that entry: the
       markers are derived from the name, so the two halves cannot drift apart. The writer returns two
       lists, what goes above the body and what goes below it; a kind that only prepends returns nothing
