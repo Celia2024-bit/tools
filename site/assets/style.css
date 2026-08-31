@@ -744,3 +744,76 @@ tbody td code { white-space: nowrap; }
   html { scroll-behavior: auto; }
   .card { transition: none; }
 }
+
+@media print {
+  /* 1. 强制保留原本的暗色背景和颜色 */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* 2. 隐藏不需要的所有元素：顶部导航栏、侧边栏目录、页脚、分页导航、按钮 */
+  .topbar, 
+  .toc, 
+  .footer, 
+  .pager, 
+  .no-print, 
+  .facts,       /* 👈 添加这行：隐藏参数卡片 */
+  .hero-grid,  /* 👈 如果上面没生效，加上这个类名 */
+  .hero-eyebrow, /* 👈 隐藏顶部标签 */
+  .eyebrow,      /* 👈 隐藏顶部标签 */
+  .tags,         /* 👈 隐藏顶部标签 */
+  .badges,       /* 👈 隐藏顶部标签 */
+  
+  button {
+    display: none !important;
+  }
+
+  /* 2.1 隐藏 GitHub 链接区 */
+  .project-links,
+  .project-link,
+  a.project-link {
+    display: none !important;
+  }
+
+  /* 3. 重置布局，占满宽度 */
+  .layout {
+    display: block !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* ⭐ 核心修改 1：给 article 增加适当的内边距 (Padding) */
+  article {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+    padding: 10px 20px !important; /* 原来是 0，改成 10px 20px，左右就会自动留出精致缩进 */
+    box-sizing: border-box !important;
+  }
+
+  /* ⭐ 核心修改 2：调整 @page 边距 */
+  @page {
+    margin: 12mm; /* 稍作微调，配合 article 的内边距，整体视效极佳 */
+  }
+
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* 4. 防止代码块、表格、图片在跨页时被中途切断 */
+  .code, .table-wrap, table, tr, .panel, .callout {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  /* 5. 代码块打印更易读 */
+  pre, code {
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+  }
+}
+
