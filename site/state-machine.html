@@ -179,29 +179,52 @@ python3 json_to_mermaid.py ./out/state_machine.json -om ./out/flow.mmd -oh ./out
 
     <h2 id="spec">Markdown input specification format</h2>
 
-    <p>Your input <code>.md</code> file must contain the following sections and headers:</p>
+    <p>Your input <code>.md</code> file must contain the following sections and tables:</p>
 
     <div class="code">
       <div class="code-head"><span class="dot"></span>markdown</div>
 <pre><code>## Config
-- prefix: Order
+- prefix: Order</code></pre>
+    </div>
 
-## Context Definition Table
-| context_name | field_type | field_name | description || :--- | :--- | :--- | :--- || OrderContext | std::string | order_id | Unique identifier |
-| OrderContext | double | amount | Order amount |
+    <p><strong>Context Definition Table</strong></p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>context_name</th><th>field_type</th><th>field_name</th><th>description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>OrderContext</td><td><code>std::string</code></td><td><code>order_id</code></td><td>Unique identifier</td></tr>
+          <tr><td>OrderContext</td><td><code>double</code></td><td><code>amount</code></td><td>Order amount</td></tr>
+        </tbody>
+      </table>
+    </div>
 
-## State Definition Table
-| id | name | type | description |
-| :--- | :--- | :--- | :--- |
-| S1 | Idle | initial | Initial state |
-| S2 | PendingPayment | normal | Waiting for user payment |
-| S3 | Completed | final | Order finished |
+    <p><strong>State Definition Table</strong></p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>id</th><th>name</th><th>type</th><th>description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>S1</td><td>Idle</td><td>initial</td><td>Initial state</td></tr>
+          <tr><td>S2</td><td>PendingPayment</td><td>normal</td><td>Waiting for user payment</td></tr>
+          <tr><td>S3</td><td>Completed</td><td>final</td><td>Order finished</td></tr>
+        </tbody>
+      </table>
+    </div>
 
-## State Transition Table
-| id | from_state | event | guard | to_state | action | description |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| T1 | Idle | CreateOrder | | PendingPayment | InitContext | Create new order |
-| T2 | PendingPayment | PaySuccess | AmountValid | Completed | NotifyUser | Payment processed |</code></pre>
+    <p><strong>State Transition Table</strong></p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>id</th><th>from_state</th><th>event</th><th>guard</th><th>to_state</th><th>action</th><th>description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>T1</td><td>Idle</td><td>CreateOrder</td><td></td><td>PendingPayment</td><td>InitContext</td><td>Create new order</td></tr>
+          <tr><td>T2</td><td>PendingPayment</td><td>PaySuccess</td><td>AmountValid</td><td>Completed</td><td>NotifyUser</td><td>Payment processed</td></tr>
+        </tbody>
+      </table>
     </div>
 
     <h2 id="validation">Validation &amp; verification</h2>
@@ -230,36 +253,45 @@ python3 json_to_mermaid.py ./out/state_machine.json -om ./out/flow.mmd -oh ./out
     <h2 id="example">Worked example</h2>
 
     <p>
-      The fixture under <code>test/</code> is an order lifecycle. This is the whole input — Markdown
-      tables, editable in Notepad, with <code>|</code> as the separator:
+      The fixture under <code>test/</code> is an order lifecycle. Below are the state and transition definitions:
     </p>
 
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>test/state_machine.md — states</div>
-<pre><code>| **id** | **name**       | **type** | **description**                                      |
-| ------ | -------------- | -------- | ---------------------------------------------------- |
-| S000   | Idle           | initial  | Order not created yet                                |
-| S001   | PendingPayment | normal   |                                                      |
-| S002   | Paid           | normal   |                                                      |
-| S003   | Shipped        | normal   |                                                      |
-| S004   | Completed      | final    |                                                      |
-| S005   | Cancelled      | final    |                                                      |
-| S006   | PendingAudit   | normal   | Refund amount is large, manual confirmation required |</code></pre>
+    <p><strong>States (<code>test/state_machine.md</code>)</strong></p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>id</th><th>name</th><th>type</th><th>description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>S000</td><td>Idle</td><td>initial</td><td>Order not created yet</td></tr>
+          <tr><td>S001</td><td>PendingPayment</td><td>normal</td><td></td></tr>
+          <tr><td>S002</td><td>Paid</td><td>normal</td><td></td></tr>
+          <tr><td>S003</td><td>Shipped</td><td>normal</td><td></td></tr>
+          <tr><td>S004</td><td>Completed</td><td>final</td><td></td></tr>
+          <tr><td>S005</td><td>Cancelled</td><td>final</td><td></td></tr>
+          <tr><td>S006</td><td>PendingAudit</td><td>normal</td><td>Refund amount is large, manual confirmation required</td></tr>
+        </tbody>
+      </table>
     </div>
 
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>test/state_machine.md — transitions</div>
-<pre><code>| **id** | **from_state** | **event**          | **guard**    | **to_state**   | **action**              |
-| ------ | -------------- | ------------------ | ------------ | -------------- | ----------------------- |
-| T001   | Idle           | CreateOrder        |              | PendingPayment |                         |
-| T002   | PendingPayment | PaySuccess         |              | Paid           | SendPaymentNotification |
-| T003   | PendingPayment | PayTimeout         |              | Cancelled      |                         |
-| T004   | Paid           | Ship               |              | Shipped        |                         |
-| T005   | Shipped        | ConfirmReceipt     |              | Completed      |                         |
-| T006   | Shipped        | AutoConfirmTimeout |              | Completed      | AutoConfirmReceipt      |
-| T007   | Paid           | ApplyRefund        | AmountLte100 | Cancelled      | AutoRefund              |
-| T008   | Paid           | ApplyRefund        | AmountGt100  | PendingAudit   | TransferToManualAudit   |
-| T009   | PendingAudit   | AuditPass          |              | Cancelled      | RefundToAccount         |</code></pre>
+    <p><strong>Transitions (<code>test/state_machine.md</code>)</strong></p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>id</th><th>from_state</th><th>event</th><th>guard</th><th>to_state</th><th>action</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>T001</td><td>Idle</td><td>CreateOrder</td><td></td><td>PendingPayment</td><td></td></tr>
+          <tr><td>T002</td><td>PendingPayment</td><td>PaySuccess</td><td></td><td>Paid</td><td>SendPaymentNotification</td></tr>
+          <tr><td>T003</td><td>PendingPayment</td><td>PayTimeout</td><td></td><td>Cancelled</td><td></td></tr>
+          <tr><td>T004</td><td>Paid</td><td>Ship</td><td></td><td>Shipped</td><td></td></tr>
+          <tr><td>T005</td><td>Shipped</td><td>ConfirmReceipt</td><td></td><td>Completed</td><td></td></tr>
+          <tr><td>T006</td><td>Shipped</td><td>AutoConfirmTimeout</td><td></td><td>Completed</td><td>AutoConfirmReceipt</td></tr>
+          <tr><td>T007</td><td>Paid</td><td>ApplyRefund</td><td>AmountLte100</td><td>Cancelled</td><td>AutoRefund</td></tr>
+          <tr><td>T008</td><td>Paid</td><td>ApplyRefund</td><td>AmountGt100</td><td>PendingAudit</td><td>TransferToManualAudit</td></tr>
+          <tr><td>T009</td><td>PendingAudit</td><td>AuditPass</td><td></td><td>Cancelled</td><td>RefundToAccount</td></tr>
+        </tbody>
+      </table>
     </div>
 
     <p>
