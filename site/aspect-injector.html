@@ -34,16 +34,11 @@
     <a href="#config">Config</a>
     <a href="#fields" class="sub">Rule fields</a>
     <a href="#inject-type" class="sub">inject_type</a>
+    <a href="#trace" class="sub">trace</a>
     <a href="#validate" class="sub">validate</a>
     <a href="#guard" class="sub">guard</a>
     <a href="#include">The #include it adds</a>
-    <a href="#base-class">base_class</a>
-    <a href="#remove">What remove removes</a>
-    <a href="#dirs">directory vs include_dirs</a>
-    <a href="#limits">Known limitations</a>
-    <a href="#examples">Examples</a>
-    <a href="#tests">Tests</a>
-    <a href="#verify">Verification &amp; compile test</a>
+    <a href="#types-example">Custom Types & ParameterCheck</a>
   </aside>
 
   <article>
@@ -78,40 +73,18 @@
 <pre><code>pip install libclang
 python aspect_injector.py --config config.json</code></pre>
     </div>
-
-    <p>
-      That is the whole install. The tool locates the shared library itself, because the clang bindings
-      load it through the OS loader and the OS loader does not look inside site-packages — so
-      <code>pip install libclang</code> alone puts the file on disk and the import still fails. The path
-      it settled on is logged whenever it had to go looking, since "which libclang answered" is the
-      first thing worth knowing when a <code>base_class</code> rule matches nothing:
-    </p>
-
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>output</div>
-<pre><code>C++ Aspect Injector v1.2
-Mode: inject
-libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
-    </div>
-
-    <p>If yours lives somewhere the search does not cover, name it and the search is skipped entirely:</p>
-
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>shell</div>
-<pre><code>ASPECT_INJECTOR_LIBCLANG=/opt/llvm/lib/libclang.so python aspect_injector.py --config config.json</code></pre>
-    </div>
-
-    <p>
-      Log lines name each function by its fully qualified name, so overrides that share a method name
-      stay distinguishable, and end with the kinds actually written into it:
-    </p>
-
+    
     <div class="code">
       <div class="code-head"><span class="dot"></span>log</div>
-<pre><code><b class="ok">✨ Injected:</b> StrategyEngine::Run() [trace]
-<b class="ok">✨ Injected:</b> AlphaStrategy::Run() [trace]
-<b class="ok">✨ Injected:</b> util::Reset() [trace]              <b class="c">free function, namespace only</b>
-<b class="ok">✨ Injected:</b> Normalize() [trace, validate]      <b class="c">free function at file scope</b></code></pre>
+<pre><code>⚙️ Processing: test\src\OrderMgr.cpp
+   <b class="ok">✨ Injected:</b> OrderMgr::SubmitOrder() [trace, validate]
+   <b class="ok">✨ Injected:</b> OrderMgr::OnConnected() [trace]
+   <b class="ok">✨ Added include:</b> ScopeTrace.h
+   <b class="ok">✨ Added include:</b> ParameterCheck.h
+
+⚙️ Processing: test\src\market\MarketData.cpp
+   <b class="ok">✨ Injected:</b> MarketData::OnTick() [trace]
+   <b class="ok">✨ Added include:</b> ScopeTrace.h</code></pre>
     </div>
 
     <h2 id="config">Config</h2>
@@ -176,7 +149,7 @@ libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
     <div class="code">
       <div class="code-head"><span class="dot"></span>config.json</div>
 <pre><code><b class="n">"inject"</b>: [
-    { <b class="n">"directory"</b>: <b class="s">"src"</b>,       <b class="n">"function"</b>: <b class="s">""</b>, <b class="n">"inject_type"</b>: [<b class="s">"trace"</b>] },
+    { <b class="n">"directory"</b>: <b class="s">"src"</b>,       <b class="n">"function"</b>: <b class="s">""</b>, <b class="n">"inject_type"</b>: [<b class="s">"trace"</b>, <b class="s">"guard"</b>] },
     { <b class="n">"directory"</b>: <b class="s">"src/hot"</b>,   <b class="n">"function"</b>: <b class="s">""</b>, <b class="n">"inject_type"</b>: [<b class="s">"trace"</b>, <b class="s">"validate"</b>] }
 ]</code></pre>
     </div>
@@ -191,6 +164,13 @@ libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
         </tbody>
       </table>
     </div>
+    
+    <h4 id="trace">trace</h4>
+
+    <div class="code">
+      <div class="code-head"><span class="dot"></span>c++</div>
+<pre><code><b class="n">ScopeTrace trace</b>(__FILE__, __LINE__, <b class="s">"RiskChecker::CheckLimits"</b>);</code></pre>
+    </div>
 
     <h4 id="validate">validate</h4>
 
@@ -199,50 +179,6 @@ libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
 <pre><code><b class="k">static const char</b>* __param_names[] = { <b class="s">"account_id"</b>, <b class="s">"notional"</b>, <b class="s">"max_notional"</b> };
 <b class="n">validate_params</b>(<b class="s">"RiskChecker::CheckLimits"</b>, __param_names, account_id, notional, max_notional);</code></pre>
     </div>
-
-    <p>Two cases where fewer parameters come out than went in:</p>
-
-    <ul>
-      <li><strong>No parameters at all</strong> → no block. There is nothing to check, and
-        <code>const char* __param_names[] = {}</code> does not compile.</li>
-      <li><strong>A parameter with no name</strong> (<code>void Snapshot(int account_id, double* out, int)</code>)
-        → skipped, and the rest of the block is written as normal. An unnamed parameter cannot be
-        referred to, so there is nothing to pass; the table and the argument list stay consistent with
-        each other, just shorter than the signature.</li>
-    </ul>
-
-    <div class="callout warn">
-      <span class="callout-label">Expect this</span>
-      <p>
-        <strong>Expect most functions to get no validate block.</strong> <code>void Run()</code>,
-        <code>Stop()</code>, <code>OnTick()</code> — the no-argument methods that make up the bulk of
-        most code — take nothing, so they get a trace and nothing else. A
-        <code>["trace", "validate"]</code> rule producing validate blocks in three files out of eight is
-        the normal result, not a broken one. The log says which kinds each function got, so read it
-        rather than grepping the tree and guessing.
-      </p>
-    </div>
-
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>log</div>
-<pre><code>⚙️ Processing: test\src\OrderMgr.cpp
-   <b class="ok">✨ Injected:</b> OrderMgr::SubmitOrder() [trace, validate]
-   <b class="ok">✨ Injected:</b> OrderMgr::OnConnected() [trace]
-   <b class="ok">✨ Added include:</b> ScopeTrace.h
-   <b class="ok">✨ Added include:</b> ParameterCheck.h
-
-⚙️ Processing: test\src\market\MarketData.cpp
-   <b class="ok">✨ Injected:</b> MarketData::OnTick() [trace]
-   <b class="ok">✨ Added include:</b> ScopeTrace.h</code></pre>
-    </div>
-
-    <p><code>MarketData.cpp</code> has no <code>ParameterCheck.h</code> because nothing in it needed one.</p>
-
-    <p>
-      Overloads are handled per definition, not per name: two overloads with different parameter lists
-      each get their own — so <code>RiskChecker::Margin</code> appears twice in the log, once per
-      definition.
-    </p>
 
     <h4 id="guard">guard</h4>
 
@@ -259,8 +195,7 @@ libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
 {
     <b class="k">try</b>  <b class="c">//  @autogen: guard</b>
     {  <b class="c">//  @autogen: guard</b>
-
-    <b class="k">return true</b>;
+    <b class="c"> // the original code;</b>
     }  <b class="c">//  @autogen: end of guard</b>
     <b class="k">catch</b> (<b class="k">const</b> std::exception&amp; error)  <b class="c">//  @autogen: end of guard</b>
     {  <b class="c">//  @autogen: end of guard</b>
@@ -274,35 +209,6 @@ libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
     }  <b class="c">//  @autogen: end of guard</b>
 }</code></pre>
     </div>
-
-    <p>Four things about that are deliberate:</p>
-
-    <ul>
-      <li><strong><code>throw;</code>, always.</strong> The guard reports the error and rethrows it.
-        Swallowing would change what your program does, and in a function that returns something it
-        would run off the end of the body without returning — undefined behaviour, not a compile error.
-        If you want the exception stopped, stop it yourself; this tool does not make that decision for
-        you.</li>
-      <li><strong>The body is not reindented.</strong> It is now one level deeper than it looks. That is
-        the price of this tool's actual promise: <code>remove</code> gives you back the file you had,
-        byte for byte, and reindenting would turn every injection into a diff across the whole
-        function.</li>
-      <li><strong>Two arms, so nothing gets past it.</strong> <code>catch (...)</code> reports what
-        <code>std::exception</code> cannot describe. Whatever error code the exception carries is
-        reachable through <code>error.what()</code>.</li>
-      <li><strong>It goes innermost.</strong> With <code>["trace", "validate", "guard"]</code>, the
-        <code>try</code> opens <em>below</em> the trace object and the parameter check, so the
-        <code>ScopeTrace</code> is still alive while the catch runs and its destructor logs the exit
-        afterwards.</li>
-    </ul>
-
-    <p>
-      A body written entirely on its opening line — <code>int size() const { return n_; }</code> — is
-      skipped and says so, because there is no line between the braces to wrap and guessing would mean
-      writing a <code>}</code> into the middle of a statement.
-    </p>
-
-    <p><code>remove</code> rules do <strong>not</strong> take <code>inject_type</code>. See below for why.</p>
 
     <h2 id="include">The <code>#include</code> it adds</h2>
 
@@ -337,564 +243,56 @@ libclang: C:\Python\Lib\site-packages\clang\native\libclang.dll</code></pre>
       </table>
     </div>
 
-    <p>
-      The <code>try</code>/<code>catch</code> a <code>guard</code> writes needs no header of its own —
-      but its catch arms have to report the error <em>somewhere</em>, and
-      <code>ErrorLogger::LogError</code> is where this project reports errors. Reporting nothing at all
-      was the alternative, and a guard that silently rethrows is not worth injecting. If your tree
-      reaches <code>ErrorLogger</code> some other way, or you want a different reporter, that is the
-      <code>header</code> field of the <code>guard</code> entry in <code>INJECTION_KINDS</code> and the
-      two lines above it.
-    </p>
-
-    <div class="callout">
-      <span class="callout-label">Before your first validate run</span>
-      <p>
-        <code>ParameterCheck.h</code> is yours to prepare — it and the <code>CheckTraits.h</code> /
-        <code>Types.h</code> it includes are hand-maintained, and this tool neither generates nor
-        validates them. An earlier version generated <code>ParameterCheck.h</code> from a
-        <code>Types.h</code> named in a <code>headers</code> config block; that is gone, and so is the
-        block.
-      </p>
-    </div>
+    <h2 id="types-example">Extending <code>ParameterCheck.h</code> with Custom Types</h2>
 
     <p>
-      Three rules govern the include, and each one is a bug that has to be prevented rather than a
-      nicety:
-    </p>
-
-    <ul>
-      <li><strong>It follows what was written, never what the rule asked for.</strong> A
-        <code>validate</code> rule meeting a function with no parameters writes no block, so it gets no
-        <code>ParameterCheck.h</code> — otherwise the rule would drag <code>Types.h</code> into
-        translation units that have no use for it.</li>
-      <li><strong>It goes after the file's last unconditional <code>#include</code>.</strong> Last, so
-        it lands below the file's own header. Unconditional, because the final <code>#include</code> in
-        a real file is often inside <code>#if defined(_WIN32)</code>, and appending there would make a
-        header the injected code always needs depend on the platform.</li>
-      <li><strong>It survives a partial remove.</strong> The include is file-scoped while the blocks are
-        function-scoped, so <code>remove</code> only deletes it once the last block of its kind is gone
-        from that file. A rule naming one function out of five leaves it in place for the other
-        four.</li>
-    </ul>
-
-    <p>
-      An include already in the file is left alone — a second copy would compile, but then
-      <code>remove</code> would have to guess which of the two is safe to delete. And an include with no
-      marker comment on it is not this tool's, and is never touched.
-    </p>
-
-    <p>
-      Both directions are logged per file and counted in the summary, so "which of my files just grew a
-      dependency on <code>Types.h</code>" is answerable from the log:
-    </p>
-
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>log</div>
-<pre><code>⚙️ Processing: test\src\risk\RiskChecker.cpp
-   <b class="ok">✨ Injected:</b> RiskChecker::CheckOrder()
-   <b class="ok">✨ Added include:</b> ScopeTrace.h
-   <b class="ok">✨ Added include:</b> ParameterCheck.h
-
-Includes Added : 11
-Includes Gone  : 0</code></pre>
-    </div>
-
-    <h2 id="base-class"><code>base_class</code></h2>
-
-    <p>
-      <code>base_class</code> is for the "I don't know who implements/calls this virtual function" case:
-      name the base class and the tool finds every override down the whole hierarchy, wherever those
-      files happen to live.
-    </p>
-
-    <p>Two things to know about it:</p>
-
-    <ul>
-      <li><strong>is-a semantics.</strong> <code>"base_class": "A"</code> matches <code>A</code> itself
-        as well as its descendants — when you are hunting for who calls a virtual function,
-        <code>A</code>'s own implementation is a candidate too.</li>
-      <li><strong>Access specifier is ignored.</strong> <code>class B : private A</code> matches just
-        like <code>class B : public A</code>. Private inheritance still overrides the virtual and still
-        dispatches, so skipping it risks a silent miss.</li>
-    </ul>
-
-    <p>
-      <code>base_class</code> is rejected in <code>exclude</code> entries only — excluding works at the
-      directory/file/function level.
-    </p>
-
-    <h2 id="remove">What <code>remove</code> removes</h2>
-
-    <p>
-      <strong>Only what this tool wrote.</strong> Every line it injects carries a marker comment naming
-      the kind that wrote it:
+      <code>ParameterCheck.h</code> requires user-defined types (such as custom enums or data structs) to be declared in a <code>Types.h</code> header. You can define how custom types are checked using either a <code>check_traits&lt;T&gt;</code> specialization or an in-class <code>isValid()</code> member function — without modifying <code>ParameterCheck.h</code> itself.
     </p>
 
     <div class="code">
       <div class="code-head"><span class="dot"></span>c++</div>
-<pre><code>    ScopeTrace trace(  <b class="c">//  @autogen: trace</b></code></pre>
+<pre><code><b class="k">enum class</b> ActionType
+{
+    BUY,
+    SELL,
+    HOLD,
+};
+
+<b class="c">// ActionType is an enum, so it can't have an isValid() member.</b>
+<b class="c">// Make it checkable via a check_traits&lt;T&gt; specialization instead -</b>
+<b class="c">// ParameterCheck.h never needs to know about ActionType at all.</b>
+<b class="k">template</b> &lt;&gt;
+<b class="k">struct</b> check_traits&lt;ActionType&gt;
+{
+    <b class="k">static bool</b> check(ActionType value)
+    {
+        <b class="k">return</b> value == ActionType::BUY ||
+               value == ActionType::SELL ||
+               value == ActionType::HOLD;
+    }
+};
+
+<b class="k">struct</b> TradeData
+{
+    <b class="k">double</b> price_;
+    <b class="k">long long</b> timestamp_ms_;
+    std::string symbol_;
+
+    TradeData(<b class="k">double</b> price) : price_(price)
+    {
+        timestamp_ms_ = std::chrono::duration_cast&lt;std::chrono::milliseconds&gt;(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    }
+    TradeData() : price_(0.0), timestamp_ms_(0) {}
+
+    <b class="c">// Self-contained validity check. default_check() picks this up</b>
+    <b class="c">// automatically (see CheckTraits.h) - no edits needed in ParameterCheck.h.</b>
+    <b class="k">bool</b> isValid() <b class="k">const</b> {
+        <b class="k">return</b> price_ &gt; 0.0 &amp;&amp; timestamp_ms_ &gt; 0;
+    }
+};</code></pre>
     </div>
-
-    <p>
-      That comment is the whole of what <code>remove</code> looks for. It does not recognise
-      <code>ScopeTrace</code> or <code>validate_params</code> as C++ — so your own hand-written guard,
-      even one spelled exactly like the injected version, is not this tool's to delete.
-    </p>
-
-    <div class="callout warn">
-      <span class="callout-label">Upgrading</span>
-      <p>
-        Blocks written by a version of this tool that predates the marker carry no comment, and the
-        current <code>remove</code> cannot see them. Strip them with the old version first, or delete
-        them by hand.
-      </p>
-    </div>
-
-    <p>
-      <strong>A remove rule says where to clean, never what.</strong> It has no <code>inject_type</code>,
-      and that is deliberate: whatever the injector left in a matched function comes out — trace,
-      validate, both halves of a guard, all of it — and the function is left byte-identical to how it
-      started.
-    </p>
-
-    <p>
-      Being selective was a bug, not a feature. A remove that understood only <code>ScopeTrace</code>
-      left the validate block of a <code>["trace", "validate"]</code> injection sitting in place. Nothing
-      then reported the file as dirty, so the next <code>inject</code> saw no trace, wrote a fresh block
-      above the orphan, and the file ended up with two <code>__param_names</code> declarations in one
-      scope and no longer compiled.
-    </p>
-
-    <p>
-      Beyond that, <code>remove</code> mirrors <code>inject</code>, with one deliberate asymmetry — the
-      filters decide the <em>scope</em>, and their presence also decides <em>how</em> the file is read:
-    </p>
-
-    <ul>
-      <li><strong>Any filter present</strong> (<code>function</code>, <code>base_class</code>, or a
-        matching <code>exclude</code>) → the file is parsed and only the marked lines inside the selected
-        functions are deleted — the whole body is searched, not just the top of it, because a
-        <code>guard</code> leaves its catch arms just above the function's own brace. Same selection
-        pass as <code>inject</code>, so the same rule takes back out exactly what it put in, and the log
-        names each function it removed from. Note this means adding a single <code>exclude</code> entry
-        switches an otherwise unfiltered <code>remove</code> onto the parsing path.</li>
-      <li><strong>No filter at all</strong> → no parsing, just a line scan that strips <em>every</em>
-        marked block in the matched files. Blunter, but it also catches blocks left over from a rule you
-        have since edited, and blocks in files clang cannot parse. The log names the kinds it found
-        instead of the function, since there is no AST to ask:</li>
-    </ul>
-
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>log</div>
-<pre><code>⚙️ Processing: test\src\OrderMgr.cpp
-   <b class="ok">✨ Removed injection</b> [trace, validate]
-   <b class="ok">✨ Removed injection</b> [trace]</code></pre>
-    </div>
-
-    <p>
-      Counted per injection, not per marked run: a <code>guard</code> writes at both ends of a function,
-      and the run of catch arms is the bottom of an injection already counted. So the number the summary
-      reports for a remove is the number a matching inject reported, on either path.
-    </p>
-
-    <p>
-      Adding a new injection kind does not require touching <code>remove</code>, or the include handling
-      either. A kind is one entry in <code>INJECTION_KINDS</code> (<code>injection_rules.py</code>) — its name,
-      the function that writes it, the header it needs — and everything else reads that entry: the
-      markers are derived from the name, so the two halves cannot drift apart. The writer returns two
-      lists, what goes above the body and what goes below it; a kind that only prepends returns nothing
-      for the second.
-    </p>
-
-    <h2 id="dirs"><code>directory</code> vs <code>include_dirs</code></h2>
-
-    <p>These answer different questions and are easy to confuse:</p>
-
-    <ul>
-      <li><code>directory</code> — <strong>where the <code>.cpp</code> files I want to modify live.</strong>
-        This tool's own scan scope.</li>
-      <li><code>include_dirs</code> — <strong>where clang should look to resolve <code>#include</code>.</strong>
-        Exactly the compiler's <code>-I</code>. Affects parsing only; never selects a file for
-        injection.</li>
-    </ul>
-
-    <p>
-      You need <code>include_dirs</code> when an <code>#include</code> is written relative to a project
-      include root rather than to the source file itself. The two fixture trees under <code>test/</code>
-      exist to show exactly this contrast.
-    </p>
-
-    <div class="panel">
-      <div class="panel-title">Interface next to the sources — <code>include_dirs</code> NOT needed (<code>test/src</code>)</div>
-      <div class="code">
-        <div class="code-head"><span class="dot"></span>tree</div>
-<pre><code>test/src/strategy/IStrategy.h            <b class="c">base class</b>
-test/src/strategy/StrategyEngine.cpp  -&gt;  #include "StrategyEngine.h"
-test/src/strategy/StrategyEngine.h    -&gt;  #include "IStrategy.h"          <b class="c">same folder</b>
-test/src/strategy/alpha/AlphaStrategy.h -&gt; #include "../StrategyEngine.h" <b class="c">relative</b></code></pre>
-      </div>
-      <p>
-        Every <code>#include</code> is relative to its own file, so clang resolves the whole chain
-        unaided. See <code>config_base_class_example.json</code> — no <code>include_dirs</code>.
-      </p>
-    </div>
-
-    <div class="panel">
-      <div class="panel-title">Interface in a separate include root — <code>include_dirs</code> REQUIRED (<code>test/proj</code>)</div>
-      <div class="code">
-        <div class="code-head"><span class="dot"></span>tree</div>
-<pre><code>test/proj/include/framework/IExecutor.h        <b class="c">base class, outside the scan tree</b>
-test/proj/src/exec/OrderExecutor.h          -&gt;  #include "framework/IExecutor.h"
-test/proj/src/exec/fast/FastExecutor.h      -&gt;  #include "../OrderExecutor.h"</code></pre>
-      </div>
-      <p>
-        <code>directory</code> is <code>test/proj/src</code>, but <code>IExecutor</code> lives under
-        <code>test/proj/include</code> and is included by include-root-relative path, so
-        <code>include_dirs</code> must list <code>test/proj/include</code>. See
-        <code>config_base_class_includedirs_example.json</code>.
-      </p>
-    </div>
-
-    <p>
-      Omit it and the failure is total but loud — clang cannot resolve <code>IExecutor</code>, so
-      <code>OrderExecutor</code> looks like it has no base class and the rule matches nothing:
-    </p>
-
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>log</div>
-<pre><code>⚙️ Processing: test\proj\src\exec\OrderExecutor.cpp
-   <b class="no">⚠️  Parse error: 'framework/IExecutor.h' file not found</b>
-   <b class="no">⚠️  Base-class matching may be incomplete — check "include_dirs" in the config.</b>
-Trace Injected : 0</code></pre>
-    </div>
-
-    <p>
-      <code>base_class</code> depends on this far more than the other filters do: matching by function
-      name needs no type information, matching by inheritance needs the base class declaration to
-      actually parse. That is why clang's diagnostics are echoed to the log whenever a
-      <code>base_class</code> rule is active — treat the warning as "results are probably incomplete",
-      not as noise.
-    </p>
-
-    <p>
-      Only <strong>fatal</strong> diagnostics are echoed, which in practice means an <code>#include</code>
-      clang could not resolve — precisely the failure that silently empties a <code>base_class</code>
-      match. Ordinary semantic errors are not reported: the hierarchy still resolves through them, so
-      echoing them would train you to ignore the warning that matters.
-    </p>
-
-    <p>
-      One fatal is filtered out all the same: this tool's own header. Rerun over an already-injected tree
-      without an <code>-I</code> covering <code>ScopeTrace.h</code> and clang says
-      <code>'ScopeTrace.h' file not found</code> for every single file, which tells you nothing about
-      base-class matching — the injected include sits <em>below</em> the file's own, so everything the
-      hierarchy needs has already been read by the time clang gets there. A header of <em>yours</em>
-      that cannot be found is still reported, and still reported first, because it is higher up the
-      file.
-    </p>
-
-    <h2 id="limits">Known limitations</h2>
-
-    <ul>
-      <li><strong>Headers are not scanned.</strong> Only <code>.cpp</code> files, so a virtual function
-        defined inline in a header (<code>void Run() override { ... }</code>) is never touched. This
-        bites hardest with <code>base_class</code>, since subclass overrides are often one-liners in
-        headers.</li>
-      <li><strong>The headers have to be reachable.</strong> The tool writes the <code>#include</code>;
-        making the name resolve is your build's job, the same <code>-I</code> your own headers already
-        rely on. None of the three ships here — they all live in the sibling <code>util</code> repo, and
-        <code>ScopeTrace.h</code> needs the <code>Logger.h</code> next to it. Nothing is checked before
-        the sweep: a <code>validate</code> run against a <code>ParameterCheck.h</code> you have not
-        prepared injects happily and fails at compile time.</li>
-      <li><strong>A <code>guard</code> cannot wrap a constructor's initialiser list.</strong> A
-        <code>try</code> covering member initialisation is a <em>function-try-block</em> —
-        <code>Foo::Foo() try : x_(f())</code>, with the <code>try</code> before the colon — and that is
-        not the shape this writes. A constructor gets its body wrapped and its initialiser list left
-        outside it, which is valid C++ but not what you would want if <code>f()</code> is the thing that
-        throws.</li>
-      <li><strong>A <code>guard</code> does not reindent the body.</strong> By design; see above.</li>
-    </ul>
-
-    <h2 id="examples">Examples</h2>
-
-    <p>All under <code>configs_examples/</code>:</p>
-
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>File</th><th>Shows</th></tr></thead>
-        <tbody>
-          <tr><td><code>config_inject_example.json</code></td><td>inject with a function-level <code>exclude</code></td></tr>
-          <tr><td><code>config_remove_example.json</code></td><td>remove with a function-level <code>exclude</code></td></tr>
-          <tr><td><code>config_base_class_example.json</code></td><td>every <code>Run()</code> override under <code>IStrategy</code>, no <code>include_dirs</code> needed</td></tr>
-          <tr><td><code>config_base_class_includedirs_example.json</code></td><td>every <code>Execute()</code> override under <code>IExecutor</code>, <code>include_dirs</code> required</td></tr>
-          <tr><td><code>config_base_class_remove_example.json</code></td><td>the exact undo of the one above — same fields, <code>inject</code> swapped for <code>remove</code></td></tr>
-          <tr><td><code>config_inject_types_example.json</code></td><td>two directories, a different <code>inject_type</code> for each — so one tree gets both includes and the other only <code>ScopeTrace.h</code></td></tr>
-          <tr><td><code>config_inject_types_remove_example.json</code></td><td>the undo of the one above — one unfiltered rule per tree, no <code>inject_type</code> needed</td></tr>
-          <tr><td><code>config_guard_example.json</code></td><td>all three kinds over one tree, <code>guard</code> alone over another</td></tr>
-          <tr><td><code>config_guard_remove_example.json</code></td><td>the undo of the one above</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <h2 id="tests">Tests</h2>
-
-    <p>Change anything, then run this. Exit code 0 means nothing that used to work is broken.</p>
-
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>shell</div>
-<pre><code>python test/run_tests.py</code></pre>
-    </div>
-
-    <p>
-      No arguments and no environment setup — it finds libclang through the tool's own locator, not a
-      copy of it, and puts the fixture trees back exactly as it found them. Three parts:
-    </p>
-
-    <h3>1. Scenarios</h3>
-
-    <p>
-      Each runs a real rule against the fixture trees and asserts the exact set of functions that
-      received (or lost) a trace. Because the expected sets are exact, the classes that must NOT match
-      are asserted by their absence — <code>NetworkMgr::Run</code> (same method name, unrelated class)
-      and <code>LocalCache::Execute</code> (same method name, no base class). Two of them run the shipped
-      example configs for real rather than a copy of their rules.
-    </p>
-
-    <p>
-      Every scenario also carries two invariants it did not have to ask for: per file, the injected
-      <code>#include</code> is present exactly when there is injected code needing it and never twice,
-      and every fixture has as many <code>{</code> as <code>}</code>. The first turns each inject
-      scenario into a check that the include was added and each remove scenario into a check that it was
-      taken away — without any scenario hard-coding a count. Both ways of getting that wrong are quiet:
-      a missing include is a file that does not compile, and a leftover one drags <code>Types.h</code>
-      into a translation unit with no use for it. The brace count is there because <code>guard</code> is
-      the first kind that writes below the body as well as above it, so it is the first that can leave a
-      file with an unmatched brace — a whole category of breakage no marker count would see.
-    </p>
-
-    <h3>2. Self checks</h3>
-
-    <p>
-      Breaks the tool on purpose eleven ways — degrade targeted remove to the whole-file scan, make
-      remove blind to everything but <code>trace</code>, pass one argument fewer than the name table
-      names, claim every kind the rule asked for whether or not it wrote anything, inject blocks without
-      their include, leave the include behind after the last block went, report the tool's own header as
-      a parse problem, open a <code>guard</code>'s <code>try</code> and never close it, drop the
-      <code>throw;</code> from its catch arms, look only at the top of the body when removing, typo a
-      <code>base_class</code> in an example config — and confirms the right scenarios go red and the
-      others stay green. A green suite only means something if it can go red; this is what stops an
-      assertion from quietly becoming vacuous. Skipped when part 1 is already failing, since it asserts
-      <em>which</em> scenarios fail.
-    </p>
-
-    <p>
-      The claim-every-kind one changes no file at all: counts, byte equality, both round trips stay
-      green. What goes red is the log — which functions it says got a validate block — and the include,
-      since both are meant to follow <em>what was written</em> rather than what was asked for. That the
-      two fail together is the point.
-    </p>
-
-    <p>
-      The three <code>guard</code> breakages are graded, and what each one is invisible to is the
-      finding. An unclosed <code>try</code> still counts, removes and round-trips perfectly — only the
-      brace check refuses it. A guard with no <code>throw;</code> passes even that: right size, right
-      place, right include, restores byte for byte, and every exception in the program now stops where
-      it was thrown. Only reading the emitted C++ back notices. And a targeted remove that looks only at
-      the top of the body — which was correct code until a kind wrapped a body — leaves the catch arms
-      behind while reporting success, so it goes red on the guard scenarios and stays green on every
-      <code>trace</code>/<code>validate</code> one.
-    </p>
-
-    <p>
-      The two include breakages are opposites, and their <code>must_pass</code> lists are where the rule
-      actually gets pinned down. Never adding the include leaves <em>"warns and injects nothing"</em>
-      green, because a rule that wrote nothing needs nothing. Never removing it leaves
-      <em>"<code>function</code> only → every <code>Run()</code>"</em> green — every file holding a
-      <code>Run</code> holds something else too, so none of them may drop its include — while
-      <em>"function-level <code>exclude</code>"</em> goes red, because the files with no <code>Run</code>
-      in them did lose their last block.
-    </p>
-
-    <h3>3. Fixture audit</h3>
-
-    <p>
-      The fixtures must carry no injected code of any kind before the run and be byte-identical to the
-      snapshot after it, so no result is measuring debris left by the previous run.
-    </p>
-
-    <p>Three checks sit outside the scenario list:</p>
-
-    <ul>
-      <li><strong>A top-level config key nothing reads is rejected</strong>, including the
-        <code>headers</code> block this tool used to ship. Silence there would read as "your
-        <code>ParameterCheck.h</code> is being generated" long after that stopped being true.</li>
-      <li><strong>Hand-written code that says <code>ScopeTrace</code> survives a remove</strong>, and an
-        include the file already had is not duplicated. Nothing else here could notice: every other
-        check reads <code>ScopeTrace trace(</code> as proof of an injection, so a remove that deleted
-        somebody's own guard would look like a job well done.</li>
-      <li><strong>End to end through the CLI</strong>, inject then remove then byte-identical again.
-        Everything else calls <code>process_rule</code> directly and never reaches <code>cli.py</code>,
-        so a config the CLI chokes on — or a summary line naming a stat nobody counts — would stay
-        hidden until someone ran the tool for real. The inject half has to change something, or
-        "restored" would pass for a run that did nothing.</li>
-    </ul>
-
-    <h4>Inject scenarios</h4>
-
-    <ul>
-      <li>interface beside the sources, <code>include_dirs</code> omitted → matches</li>
-      <li>interface in a separate include root, <code>include_dirs</code> given → matches</li>
-      <li>same, <code>include_dirs</code> omitted → warns and injects nothing</li>
-      <li><code>base_class</code> matches the base class's own implementation (is-a)</li>
-      <li><code>base_class</code> with an empty <code>function</code> → every method in the hierarchy</li>
-      <li>labels stay fully qualified with no <code>base_class</code> filter in play</li>
-      <li>free functions: namespace qualified, bare at file scope</li>
-      <li><code>validate</code> names match the arguments at every arity</li>
-      <li><code>guard</code> wraps every body: both arms, both rethrows, closing at the bottom</li>
-      <li>all three kinds in one function, in the order that has to hold</li>
-    </ul>
-
-    <p>
-      The last two are the only scenarios that read the injected code instead of counting it. For every
-      validate block in the fixtures, the quoted names and the arguments passed have to be the same
-      identifiers in the same order. Counts cannot see that distinction, which is why
-      <code>test/src/risk/RiskChecker.cpp</code> exists — three- and four-parameter methods, an overload
-      pair whose two definitions must not share a parameter list, a parameter with no name, and one
-      method with no parameters at all.
-    </p>
-
-    <p>
-      Every guard is read back the same way: two catch arms, both rethrowing, both naming the function
-      they were written into, and the whole thing sitting directly above that function's closing brace.
-      Every <code>try</code> written has to have a matching set of arms, so half a guard is reported
-      rather than counted. The placement matters as much as the shape — arms inserted anywhere else in
-      the body leave the braces balanced and the file compiling, with everything after them quietly
-      unguarded.
-    </p>
-
-    <p>
-      The validate scenario also pins down the mapping the log reports: <code>trace</code> for all 21
-      functions, <code>validate</code> for exactly the 8 that take parameters. Asserted against the log
-      rather than the files, because the log is what a reader judges the run by — and with 13 of 21
-      taking no arguments, "validate did nothing" is what a <em>correct</em> run looks like unless the
-      log says otherwise. A <code>guard</code> sweep is the opposite case: every function is wrapped, and
-      nothing anywhere gets a <code>ScopeTrace</code>.
-    </p>
-
-    <h4>Remove scenarios</h4>
-
-    <p>
-      Each injects first, then removes, and asserts how many blocks are left behind — counted per kind,
-      so validate debris a trace count walks past still fails the assertion:
-    </p>
-
-    <ul>
-      <li>unfiltered rule strips the whole file, unnamed</li>
-      <li>unfiltered rule strips <code>validate</code> as well as <code>trace</code></li>
-      <li>targeted rule strips <code>validate</code> as well as <code>trace</code></li>
-      <li>unfiltered rule strips both halves of a <code>guard</code>, counting each guard once</li>
-      <li>targeted rule strips both halves of a <code>guard</code></li>
-      <li><code>function</code> only → every <code>Run()</code>, nothing else</li>
-      <li><code>base_class</code> → the overrides only, <code>LocalCache::Execute</code> survives</li>
-      <li><code>base_class</code> with <code>include_dirs</code> missing → warns, removes nothing</li>
-      <li>function-level <code>exclude</code> → everything except the excluded <code>Run()</code>s</li>
-      <li>the two <code>base_class</code> example configs round-trip to zero traces</li>
-      <li>the two <code>inject_types</code> example configs clean both fixture trees</li>
-      <li>the two <code>guard</code> example configs clean both fixture trees</li>
-    </ul>
-
-    <p>
-      The <code>guard</code> removes assert what the setup planted before the remove runs. A remove
-      scenario claiming "nothing left" passes just as well when the inject never wrote anything, and half
-      a guard is exactly the kind of inject bug that would make it pass.
-    </p>
-
-    <p>Round trips assert byte equality rather than counts, in both directions:</p>
-
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>invariant</div>
-<pre><code>inject -&gt; remove            == the original file, byte for byte
-inject -&gt; remove -&gt; inject  == what the first inject produced</code></pre>
-    </div>
-
-    <p>
-      The second is the one that earns its keep. A remove that leaves one block of a two-block injection
-      behind passes every count-based check; only re-injecting and comparing catches the duplicate it
-      causes.
-    </p>
-
-    <p>
-      Byte equality says the most about <code>guard</code>, the one kind that does not simply prepend: it
-      proves the closing half went in above the function's own brace and came back out without taking a
-      line of the body with it. Eight trips are run: trace only, trace + validate, guard only, all three
-      at once, two of those targeted both ways, and both shipped example pairs.
-    </p>
-
-    <p>Plus a guard that every shipped <code>config_*example*.json</code> still passes validation.</p>
-
-    <div class="callout">
-      <span class="callout-label">Adding a scenario</span>
-      <p>
-        Append to <code>SCENARIOS</code>; the accepted keys are documented just above the list. If a
-        change of yours makes an existing scenario fail, read the diff it prints before editing the
-        expectation — that diff is the whole point of the file. <code>ASPECT_INJECTOR_LIBCLANG</code>
-        works here exactly as it does for the tool, since it is the same locator.
-      </p>
-    </div>
-
-    <h2 id="verify">Verification &amp; compilation test (<code>verify_compile.py</code>)</h2>
-
-    <p>
-      <code>verify_compile.py</code> is an end-to-end verification script. It applies the code
-      injection, attempts to compile (and optionally execute) the target C++ files using
-      <code>g++</code>, and automatically restores the Git workspace state afterwards.
-    </p>
-
-    <h3>Prerequisites</h3>
-
-    <ul>
-      <li><code>g++</code> (supporting C++17) must be available in your <code>PATH</code>.</li>
-      <li>Windows environment requiring Winsock socket API (the script automatically links
-        <code>-lws2_32</code>).</li>
-    </ul>
-
-    <h3>Quick start</h3>
-
-    <div class="code">
-      <div class="code-head"><span class="dot"></span>bash</div>
-<pre><code><b class="c"># 1. Full compilation &amp; binary execution (Default Mode)</b>
-python tools/verify_compile.py
-
-<b class="c"># 2. Fast syntax-only validation (No linking or main.cpp required)</b>
-python tools/verify_compile.py -s
-
-<b class="c"># 3. Interactive step-by-step mode (Pause after each step to inspect changes)</b>
-python tools/verify_compile.py -i
-
-<b class="c"># 4. Custom config file and target source directory</b>
-python tools/verify_compile.py -c configs_examples/config_inject_example.json -d test/src</code></pre>
-    </div>
-
-    <h3>Execution modes &amp; features</h3>
-
-    <ul>
-      <li><strong>Full Compilation &amp; Execution (Default)</strong> — compiles all <code>.cpp</code>
-        files in the target directory (e.g. <code>test/src</code>) along with implementation dependencies
-        under <code>util/</code> (excluding standalone test mains). If <code>main.cpp</code> exists in
-        the target directory, it builds <code>test_runner</code> and executes it directly to verify
-        runtime <code>ScopeTrace</code> outputs.</li>
-      <li><strong>Syntax Validation Mode (<code>-s</code> / <code>--syntax-only</code>)</strong> — uses
-        <code>g++ -fsyntax-only</code> to validate syntax, include paths, and type definitions without
-        linking or generating binaries. This mode does not require a <code>main.cpp</code>.</li>
-      <li><strong>Interactive Mode (<code>-i</code> / <code>--interactive</code>)</strong> — pauses the
-        workflow after each step (<code>Inject</code> → <code>Compile</code> → <code>Execute</code> →
-        <code>Cleanup</code>). You can open and inspect the modified C++ source files in your editor
-        during the injection step before proceeding to compilation.</li>
-      <li><strong>Automatic Cleanup</strong> — regardless of success or failure, the script executes
-        <code>git checkout</code> in its <code>finally</code> block to guarantee no dirty or injected
-        code is left in your working tree.</li>
-    </ul>
 
     <nav class="pager">
       <a href="index.html">← Overview</a>
