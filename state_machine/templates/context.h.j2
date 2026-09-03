@@ -1,8 +1,17 @@
 #ifndef {{ prefix | upper }}_CONTEXT_H
 #define {{ prefix | upper }}_CONTEXT_H
 
+#include <cstdint>
 #include <string>
 #include <vector>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+#include <optional>
+#include <variant>
+#include <chrono>
+#include <memory>
 
 {% for ctx in contexts %}
 struct {{ ctx.name }} {
