@@ -1,0 +1,1 @@
+python nl_to_state_machine.py  "An order processing system that starts in Pending, moves to Paid on PaymentReceived, and then moves to Completed on OrderDelivered."  -o "./output/my_order_sm_1.md" 
