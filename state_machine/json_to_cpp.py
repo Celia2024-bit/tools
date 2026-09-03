@@ -100,6 +100,7 @@ def main():
 
         files_map = {
             "event.h.j2": "event.h",
+            "main.cpp.j2": "main.cpp",
             "context.h.j2": f"{target_prefix}Context.h",
             "handler.h.j2": f"{target_prefix}Handler.h",
             "handler.cpp.j2": f"{target_prefix}Handler.cpp",
