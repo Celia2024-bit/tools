@@ -10,7 +10,7 @@ import argparse
 import os
 import subprocess
 from pathlib import Path
-
+import sys
 from google import genai
 import time
 from google.genai import errors, types
@@ -81,23 +81,49 @@ def main():
     parser.add_argument("-o", "--output", default="./test/state_machine.md",
                          help="Where to write the generated Markdown (default: ./test/state_machine.md)")
     parser.add_argument("--run", action="store_true",
-                         help="After generating, immediately run run_pipeline.sh")
+                         help="After generating, immediately run pipeline")
     args = parser.parse_args()
 
     print("Generating state_machine.md from description...\n")
     markdown = nl_to_state_machine_md(args.description)
 
-    out_path = Path(args.output)
+    out_path = Path(args.output).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(markdown, encoding="utf-8")
 
     print(markdown)
-    print(f"\nWritten to {out_path.resolve()}")
+    print(f"\nWritten to {out_path}")
 
     if args.run:
-        print("\nRunning existing pipeline (table_to_json.py -> json_to_mermaid.py -> json_to_cpp.py)...\n")
-        subprocess.run(["bash", "run_pipeline.sh"], check=True)
+        posix_out_path = out_path.as_posix()
+        filename = out_path.stem
+        json_path = f"./out/{filename}.json"
 
+        print(f"\nRunning Python pipeline on {posix_out_path}...\n")
+        
+        # 1. Markdown -> JSON
+        subprocess.run([sys.executable, "table_to_json.py", posix_out_path], check=True)
+        # 2. JSON -> Mermaid
+        subprocess.run([sys.executable, "json_to_mermaid.py", json_path], check=True)
+        # 3. JSON -> C++ (包含 main.cpp 生成)
+        subprocess.run([sys.executable, "json_to_cpp.py", json_path, "-p", "Order"], check=True)
+
+        # 4. 编译并运行 C++ 测试
+        print("\n🔨 Compiling and Running C++ test...")
+        code_dir = Path("./out/code")
+        executable = code_dir / "test_sm.exe" if sys.platform == "win32" else code_dir / "test_sm"
+
+        compile_cmd = [
+            "g++", "-std=c++17",
+            str(code_dir / "main.cpp"),
+            str(code_dir / "OrderStateMachine.cpp"),
+            str(code_dir / "OrderHandler.cpp"),
+            "-o", str(executable)
+        ]
+        subprocess.run(compile_cmd, check=True)
+        subprocess.run([str(executable)], check=True)
+
+        print("\n✨ All operations completed successfully!")
 
 if __name__ == "__main__":
     main()
