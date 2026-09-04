@@ -3,6 +3,7 @@
 import sys
 import os
 import argparse
+import subprocess
 from pathlib import Path
 
 # 获取 tools 目录的绝对路径
@@ -19,6 +20,35 @@ sys.path.extend([
     str(SYNC_INTERFACE_DIR)
 ])
 
+def test_syn_interface(old_path=None, new_path=None, src_path=None):
+    """测试 接口同步工具"""
+    if not old_path:
+        old_path = SYNC_INTERFACE_DIR / "test" / "include" / "IObserver_old.h"
+    else:
+        old_path = Path(old_path).resolve()
+
+    if not new_path:
+        new_path = SYNC_INTERFACE_DIR / "test" / "include" / "IObserver.h"
+    else:
+        new_path = Path(new_path).resolve()
+    
+    if not src_path:
+        src_path = SYNC_INTERFACE_DIR / "test" / "src"
+    else:
+        src_path = Path(src_path).resolve()
+        
+    print(f"\n==========================================")
+    print(f"🚀 运行 Sync Interface 工具")
+    print(f"📄 Old: {old_path}\n📄 New: {new_path}\n📁 Src: {src_path}")
+    print(f"==========================================\n")
+
+    subprocess.run([
+        sys.executable, str(SYNC_INTERFACE_DIR / "interface_sync.py"),
+        "--old", str(old_path),
+        "--new", str(new_path),
+        "--src", str(src_path)
+    ], check=True, cwd=SYNC_INTERFACE_DIR)
+    
 def test_state_machine(md_path=None):
     """测试 状态机 生成 Pipeline
     python test_runner.py --tool sm -f state_machine/test/state_machine.md
@@ -46,8 +76,6 @@ def test_aspect_injector(config_path=None):
     python test_runner.py --tool    
     """
     
-    import subprocess
-    
     if not config_path:
         config_path = ASPECT_INJECTOR_DIR / "config.json"
     else:
@@ -68,9 +96,9 @@ def test_aspect_injector(config_path=None):
     ], check=True, cwd=ASPECT_INJECTOR_DIR)
 
 def main():
-    parser = argparse.ArgumentParser(description="Tools 本地离线测试运行器 (零 Token 消耗)")
-    parser.add_argument("--tool", "-t", choices=["sm", "aspect", "all"], default="sm", 
-                        help="选择测试工具: sm (state_machine), aspect (aspect_injector), all (全部)")
+    parser = argparse.ArgumentParser(description="Tools 本地离线测试运行器")
+    parser.add_argument("--tool", "-t", choices=["sm", "aspect", "interface", "all"], default="sm", 
+                        help="选择测试工具: sm (state_machine), aspect (aspect_injector), interface (sync_interface), all (全部)")
     parser.add_argument("--file", "-f", type=str, help="显式指定配置文件路径 (.md 或 .json)")
 
     args = parser.parse_args()
@@ -80,6 +108,9 @@ def main():
         
     if args.tool in ["aspect", "all"]:
         test_aspect_injector(args.file if args.tool == "aspect" else None)
+        
+    if args.tool in ["interface", "all"]:
+        test_syn_interface()
 
 if __name__ == "__main__":
     main()
