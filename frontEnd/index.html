@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>C++ Automated Tools Dashboard</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Mermaid.js for Rendering Diagrams -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <style>
+        details > summary { cursor: pointer; list-style: none; }
+        details > summary::-webkit-details-marker { display: none; }
+        details > summary .chev { transition: transform .15s ease; }
+        details[open] > summary .chev { transform: rotate(90deg); }
+        .code-scroll { max-height: 420px; overflow: auto; }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-6">
+    <div class="max-w-6xl mx-auto space-y-6">
+
+        <!-- Header -->
+        <header class="flex justify-between items-center border-b border-slate-700 pb-4">
+            <div>
+                <h1 class="text-2xl font-bold text-sky-400">C++ Automation Toolchain</h1>
+                <p class="text-xs text-slate-400 mt-1">Docker Environment: cpp-dev-tools:v2</p>
+            </div>
+            <div id="service-status" class="flex items-center space-x-2 bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700 text-sm">
+                <span class="w-2.5 h-2.5 rounded-full bg-amber-400" id="status-dot"></span>
+                <span id="status-text" class="text-slate-300">Checking API...</span>
+            </div>
+        </header>
+
+        <!-- Control Bar -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <button onclick="runTool('sm')" class="flex flex-col items-start p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition group">
+                <span class="text-xs text-slate-400">Generator</span>
+                <span class="text-lg font-semibold text-emerald-400 group-hover:underline">1. State Machine (sm)</span>
+            </button>
+            <button onclick="runTool('aspect')" class="flex flex-col items-start p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition group">
+                <span class="text-xs text-slate-400">AST Analysis</span>
+                <span class="text-lg font-semibold text-purple-400 group-hover:underline">2. Aspect Injector</span>
+            </button>
+            <button onclick="runTool('interface')" class="flex flex-col items-start p-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition group">
+                <span class="text-xs text-slate-400">Refactoring</span>
+                <span class="text-lg font-semibold text-amber-400 group-hover:underline">3. Sync Interface</span>
+            </button>
+        </div>
+
+        <!-- Run Summary Strip -->
+        <div id="summary-bar" style="display:none" class="flex flex-wrap items-center gap-3 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-xs">
+            <span id="sum-tool" class="font-semibold text-sky-300"></span>
+            <span id="sum-status" class="px-2 py-0.5 rounded"></span>
+            <span class="text-slate-500">|</span>
+            <span class="text-slate-400">Changed files: <b id="sum-files" class="text-slate-200">0</b></span>
+            <span class="text-emerald-400" id="sum-add">+0</span>
+            <span class="text-rose-400" id="sum-del">-0</span>
+            <span class="text-slate-500">|</span>
+            <span class="text-slate-400">Generated files: <b id="sum-artifacts" class="text-slate-200">0</b></span>
+            <code id="sum-cmd" class="ml-auto text-slate-500 font-mono"></code>
+        </div>
+
+        <!-- Main Display Panel -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Mermaid Diagram Display Section -->
+            <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 flex flex-col h-[500px]">
+                <h2 class="text-sm font-semibold text-slate-300 mb-3 border-b border-slate-700 pb-2 flex justify-between items-center">
+                    <span>Mermaid State Diagram</span>
+                    <span id="diagram-badge" class="text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-400">Idle</span>
+                </h2>
+                <div id="mermaid-container" class="flex-1 overflow-auto bg-slate-900 rounded p-4 flex items-center justify-center text-slate-500 text-sm">
+                    Select 'State Machine' tool to render diagram.
+                </div>
+            </div>
+
+            <!-- Terminal Logs Output -->
+            <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 flex flex-col h-[500px]">
+                <h2 class="text-sm font-semibold text-slate-300 mb-3 border-b border-slate-700 pb-2 flex justify-between items-center">
+                    <span>Execution Output / Logs</span>
+                    <button onclick="clearLogs()" class="text-xs text-slate-400 hover:text-slate-200">Clear</button>
+                </h2>
+                <pre id="log-output" class="flex-1 overflow-auto bg-slate-950 text-slate-300 font-mono text-xs p-4 rounded whitespace-pre-wrap leading-relaxed">System ready.</pre>
+            </div>
+        </div>
+
+        <!-- Generated Artifacts (collapsed by default) -->
+        <section class="bg-slate-800 border border-slate-700 rounded-lg">
+            <details id="artifacts-panel">
+                <summary class="flex items-center gap-2 px-4 py-3 text-sm font-semibold text-slate-300 hover:text-slate-100">
+                    <span class="chev text-slate-500">▶</span>
+                    <span>Generated Files</span>
+                    <span id="artifacts-count" class="text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded">0</span>
+                    <span class="text-xs font-normal text-slate-500">state_machine/out · state_machine/output</span>
+                </summary>
+                <div class="border-t border-slate-700 p-4 space-y-3">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <input id="artifacts-filter" oninput="renderArtifacts()" placeholder="Filter by path..."
+                               class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs w-56 focus:outline-none focus:border-sky-600">
+                        <button onclick="toggleAll('artifact-list', true)" class="text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded px-2 py-1">Expand all</button>
+                        <button onclick="toggleAll('artifact-list', false)" class="text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded px-2 py-1">Collapse all</button>
+                    </div>
+                    <div id="artifact-list" class="space-y-2 text-sm text-slate-500">No artifacts yet.</div>
+                </div>
+            </details>
+        </section>
+
+        <!-- File Changes / Diff (collapsed by default) -->
+        <section class="bg-slate-800 border border-slate-700 rounded-lg">
+            <details id="diff-panel">
+                <summary class="flex items-center gap-2 px-4 py-3 text-sm font-semibold text-slate-300 hover:text-slate-100">
+                    <span class="chev text-slate-500">▶</span>
+                    <span>File Changes (git diff)</span>
+                    <span id="diff-count" class="text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded">0</span>
+                    <span id="diff-stat" class="text-xs font-normal"></span>
+                </summary>
+                <div class="border-t border-slate-700 p-4 space-y-3">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <input id="diff-filter" oninput="renderDiffs()" placeholder="Filter by path..."
+                               class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs w-56 focus:outline-none focus:border-sky-600">
+                        <button onclick="toggleAll('diff-list', true)" class="text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded px-2 py-1">Expand all</button>
+                        <button onclick="toggleAll('diff-list', false)" class="text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded px-2 py-1">Collapse all</button>
+                        <button onclick="copyAllDiff()" class="text-xs text-slate-400 hover:text-slate-200 border border-slate-700 rounded px-2 py-1">Copy patch</button>
+                    </div>
+                    <div id="diff-list" class="space-y-2 text-sm text-slate-500">No changes yet.</div>
+                </div>
+            </details>
+        </section>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8080/exec';
+
+        // 最近一次执行返回的数据
+        let lastArtifacts = [];
+        let lastDiffs = [];
+
+        // Initialize Mermaid
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+
+        const esc = (s) => String(s ?? '')
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        const fmtSize = (n) => n < 1024 ? `${n} B`
+            : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB`
+            : `${(n / 1048576).toFixed(1)} MB`;
+
+        // Health Check
+        async function checkHealth() {
+            try {
+                const res = await fetch(API_URL);
+                if (res.ok) {
+                    document.getElementById('status-dot').className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+                    document.getElementById('status-text').innerText = 'API Online (Port 8080)';
+                }
+            } catch (e) {
+                document.getElementById('status-dot').className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+                document.getElementById('status-text').innerText = 'API Offline';
+            }
+        }
+
+        async function runTool(toolName) {
+            const logElement = document.getElementById('log-output');
+            const mermaidContainer = document.getElementById('mermaid-container');
+            const diagramBadge = document.getElementById('diagram-badge');
+
+            logElement.innerText = `[INFO] Requesting execution for tool: ${toolName}...\n`;
+            diagramBadge.innerText = 'Processing...';
+            lastArtifacts = [];
+            lastDiffs = [];
+            renderArtifacts();
+            renderDiffs();
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tool: toolName })
+                });
+
+                const data = await response.json();
+                logElement.innerText = data.logs || JSON.stringify(data, null, 2);
+
+                lastArtifacts = data.artifacts || [];
+                lastDiffs = data.diffs || [];
+                renderSummary(toolName, data);
+                renderArtifacts();
+                renderDiffs();
+
+                if (data.mermaid) {
+                    diagramBadge.innerText = 'Rendered';
+                    diagramBadge.className = 'text-xs bg-emerald-900 text-emerald-300 px-2 py-0.5 rounded';
+
+                    mermaidContainer.innerHTML = `<div class="mermaid">${data.mermaid}</div>`;
+                    mermaid.run({ nodes: mermaidContainer.querySelectorAll('.mermaid') });
+                } else {
+                    diagramBadge.innerText = 'No Graph Output';
+                    diagramBadge.className = 'text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded';
+                    mermaidContainer.innerHTML = `<span class="text-slate-500 text-sm">Tool [${toolName}] executed successfully. No Mermaid chart generated.</span>`;
+                }
+            } catch (err) {
+                logElement.innerText += `\n[ERROR] Request failed: ${err.message}`;
+                diagramBadge.innerText = 'Error';
+                diagramBadge.className = 'text-xs bg-rose-900 text-rose-300 px-2 py-0.5 rounded';
+            }
+        }
+
+        function renderSummary(toolName, data) {
+            const bar = document.getElementById('summary-bar');
+            bar.style.display = 'flex';
+            document.getElementById('sum-tool').innerText = `tool: ${data.tool || toolName}`;
+
+            const statusEl = document.getElementById('sum-status');
+            const ok = data.status === 'success';
+            statusEl.innerText = ok ? 'success' : `error (exit ${data.returncode ?? '?'})`;
+            statusEl.className = ok
+                ? 'px-2 py-0.5 rounded bg-emerald-900 text-emerald-300'
+                : 'px-2 py-0.5 rounded bg-rose-900 text-rose-300';
+
+            const s = data.diff_summary || { files: 0, additions: 0, deletions: 0 };
+            document.getElementById('sum-files').innerText = s.files;
+            document.getElementById('sum-add').innerText = `+${s.additions}`;
+            document.getElementById('sum-del').innerText = `-${s.deletions}`;
+            document.getElementById('sum-artifacts').innerText = (data.artifacts || []).length;
+            document.getElementById('sum-cmd').innerText = data.command || '';
+        }
+
+        // ---------- Generated files ----------
+        function renderArtifacts() {
+            const list = document.getElementById('artifact-list');
+            const q = (document.getElementById('artifacts-filter').value || '').toLowerCase();
+            const items = lastArtifacts.filter(a => a.path.toLowerCase().includes(q));
+
+            document.getElementById('artifacts-count').innerText = lastArtifacts.length;
+
+            if (!lastArtifacts.length) {
+                list.innerHTML = '<span class="text-slate-500">No artifacts yet. Run a generator tool first.</span>';
+                return;
+            }
+            if (!items.length) {
+                list.innerHTML = '<span class="text-slate-500">No file matches the filter.</span>';
+                return;
+            }
+
+            list.innerHTML = items.map((a, i) => `
+                <details class="bg-slate-900 border border-slate-700 rounded">
+                    <summary class="flex items-center gap-2 px-3 py-2 text-xs hover:bg-slate-800">
+                        <span class="chev text-slate-500">▶</span>
+                        <span class="px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 uppercase">${esc(a.ext || 'txt')}</span>
+                        <span class="font-mono text-slate-200">${esc(a.path)}</span>
+                        <span class="text-slate-500">${a.lines} lines · ${fmtSize(a.size)}</span>
+                        ${a.truncated ? '<span class="text-amber-400">truncated</span>' : ''}
+                        <span class="ml-auto flex gap-2">
+                            <button onclick="event.preventDefault();copyArtifact(${i})" class="text-slate-400 hover:text-slate-200">Copy</button>
+                            ${a.ext === 'html' ? `<button onclick="event.preventDefault();previewHtml(${i})" class="text-sky-400 hover:text-sky-300">Preview</button>` : ''}
+                            ${a.ext === 'mmd' ? `<button onclick="event.preventDefault();renderMmd(${i})" class="text-emerald-400 hover:text-emerald-300">Diagram</button>` : ''}
+                        </span>
+                    </summary>
+                    <pre class="code-scroll border-t border-slate-700 bg-slate-950 font-mono text-xs p-3 whitespace-pre leading-relaxed text-slate-300">${esc(a.content)}</pre>
+                </details>
+            `).join('');
+
+            // 记录过滤后的顺序，便于按钮回查原始对象
+            window.__artifactView = items;
+        }
+
+        function copyArtifact(i) {
+            const a = (window.__artifactView || [])[i];
+            if (a) navigator.clipboard.writeText(a.content);
+        }
+
+        function previewHtml(i) {
+            const a = (window.__artifactView || [])[i];
+            if (!a) return;
+            const url = URL.createObjectURL(new Blob([a.content], { type: 'text/html' }));
+            window.open(url, '_blank');
+        }
+
+        function renderMmd(i) {
+            const a = (window.__artifactView || [])[i];
+            if (!a) return;
+            const container = document.getElementById('mermaid-container');
+            container.innerHTML = `<div class="mermaid">${a.content}</div>`;
+            mermaid.run({ nodes: container.querySelectorAll('.mermaid') });
+            const badge = document.getElementById('diagram-badge');
+            badge.innerText = a.name;
+            badge.className = 'text-xs bg-emerald-900 text-emerald-300 px-2 py-0.5 rounded';
+            container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        // ---------- Diffs ----------
+        const STATUS_STYLE = {
+            added: 'bg-emerald-900 text-emerald-300',
+            modified: 'bg-amber-900 text-amber-300',
+            deleted: 'bg-rose-900 text-rose-300',
+        };
+
+        function colorizeDiff(text) {
+            return text.split('\n').map(line => {
+                let cls = 'text-slate-400';
+                if (line.startsWith('+++') || line.startsWith('---')) cls = 'text-slate-500';
+                else if (line.startsWith('@@')) cls = 'text-sky-400 bg-slate-900';
+                else if (line.startsWith('+')) cls = 'text-emerald-300 bg-emerald-950/40';
+                else if (line.startsWith('-')) cls = 'text-rose-300 bg-rose-950/40';
+                return `<span class="block ${cls}">${esc(line) || '&nbsp;'}</span>`;
+            }).join('');
+        }
+
+        function renderDiffs() {
+            const list = document.getElementById('diff-list');
+            const q = (document.getElementById('diff-filter').value || '').toLowerCase();
+            const items = lastDiffs.filter(d => d.path.toLowerCase().includes(q));
+
+            document.getElementById('diff-count').innerText = lastDiffs.length;
+            const add = lastDiffs.reduce((n, d) => n + d.additions, 0);
+            const del = lastDiffs.reduce((n, d) => n + d.deletions, 0);
+            document.getElementById('diff-stat').innerHTML = lastDiffs.length
+                ? `<span class="text-emerald-400">+${add}</span> <span class="text-rose-400">-${del}</span>`
+                : '';
+
+            if (!lastDiffs.length) {
+                list.innerHTML = '<span class="text-slate-500">No changes yet. Run Aspect Injector or Sync Interface to see the diff.</span>';
+                return;
+            }
+            if (!items.length) {
+                list.innerHTML = '<span class="text-slate-500">No file matches the filter.</span>';
+                return;
+            }
+
+            list.innerHTML = items.map(d => `
+                <details class="bg-slate-900 border border-slate-700 rounded">
+                    <summary class="flex items-center gap-2 px-3 py-2 text-xs hover:bg-slate-800">
+                        <span class="chev text-slate-500">▶</span>
+                        <span class="px-1.5 py-0.5 rounded ${STATUS_STYLE[d.status] || 'bg-slate-700 text-slate-300'}">${esc(d.status)}</span>
+                        <span class="font-mono text-slate-200">${esc(d.path)}</span>
+                        <span class="ml-auto"><span class="text-emerald-400">+${d.additions}</span> <span class="text-rose-400">-${d.deletions}</span></span>
+                    </summary>
+                    <pre class="code-scroll border-t border-slate-700 bg-slate-950 font-mono text-xs p-0 py-2 whitespace-pre leading-relaxed">${colorizeDiff(d.diff)}</pre>
+                </details>
+            `).join('');
+        }
+
+        function copyAllDiff() {
+            if (!lastDiffs.length) return;
+            navigator.clipboard.writeText(lastDiffs.map(d => d.diff).join('\n'));
+        }
+
+        function toggleAll(containerId, open) {
+            document.querySelectorAll(`#${containerId} details`).forEach(d => { d.open = open; });
+        }
+
+        function clearLogs() {
+            document.getElementById('log-output').innerText = '';
+        }
+
+        checkHealth();
+    </script>
+</body>
+</html>
