@@ -41,7 +41,9 @@
                       class="w-full bg-slate-950 border border-slate-700 rounded p-3 text-sm font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-sky-600"></textarea>
             <div class="flex items-center gap-2">
                 <button id="run-btn" onclick="runPrompt()" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded text-sm font-semibold transition">Run</button>
-                <span class="text-xs text-slate-500">or load an example:</span>
+                <span class="text-xs text-slate-500">or load an example below</span>
+                <button id="reset-btn" onclick="resetWorkspace()" title="git restore . - discards every edit the tools made, so the next run starts from the committed baseline"
+                        class="ml-auto px-3 py-2 bg-slate-900 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded text-sm font-semibold transition">Reset workspace</button>
             </div>
         </div>
 
@@ -143,7 +145,9 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:8080/exec';
+        const API_BASE = 'http://localhost:8080';
+        const API_URL = `${API_BASE}/exec`;
+        const RESET_URL = `${API_BASE}/reset`;
 
         // 最近一次执行返回的数据
         let lastArtifacts = [];
@@ -403,6 +407,46 @@
 
         function toggleAll(containerId, open) {
             document.querySelectorAll(`#${containerId} details`).forEach(d => { d.open = open; });
+        }
+
+        // Roll the checkout back to the committed baseline, so the next run of a tool
+        // starts from the same sources as the first one.
+        async function resetWorkspace() {
+            const logElement = document.getElementById('log-output');
+            const resetBtn = document.getElementById('reset-btn');
+
+            if (!confirm('Run `git restore .` in the container?\n\nEvery edit the tools made to tracked files is discarded. Generated output and logs are left alone.')) {
+                return;
+            }
+
+            resetBtn.disabled = true;
+            resetBtn.innerText = 'Resetting...';
+            logElement.innerText = '[INFO] Restoring the checkout...\n';
+
+            try {
+                const response = await fetch(RESET_URL, { method: 'POST' });
+                const data = await response.json();
+                logElement.innerText = data.logs || data.message || JSON.stringify(data, null, 2);
+
+                if (data.status === 'success') {
+                    // Whatever the panels were showing has just been rolled back
+                    lastDiffs = [];
+                    lastArtifacts = [];
+                    renderDiffs();
+                    renderArtifacts();
+                    document.getElementById('summary-bar').style.display = 'none';
+                    document.getElementById('mermaid-container').innerHTML =
+                        '<span class="text-slate-500 text-sm">Workspace restored. Run a tool to render a diagram.</span>';
+                    const badge = document.getElementById('diagram-badge');
+                    badge.innerText = 'Idle';
+                    badge.className = 'text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-400';
+                }
+            } catch (err) {
+                logElement.innerText += `\n[ERROR] Reset failed: ${err.message}`;
+            } finally {
+                resetBtn.disabled = false;
+                resetBtn.innerText = 'Reset workspace';
+            }
         }
 
         function clearLogs() {

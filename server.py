@@ -312,6 +312,95 @@ def exec_tool():
             "traceback": err_msg
         }), 500
 
+def _git(*git_args):
+    """Run a git command inside the tools checkout."""
+    return subprocess.run(
+        ["git", *git_args], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", cwd=TOOLS_DIR,
+    )
+
+
+def _porcelain_status():
+    """Return (tracked_changes, untracked_paths, result) from `git status --porcelain`."""
+    res = _git("status", "--porcelain")
+    if res.returncode != 0:
+        return None, None, res
+
+    tracked, untracked = [], []
+    for line in res.stdout.splitlines():
+        if not line.strip():
+            continue
+        code, path = line[:2], line[3:].strip()
+        (untracked if code == "??" else tracked).append(path)
+    return tracked, untracked, res
+
+
+@app.route('/reset', methods=['POST'])
+def reset_workspace():
+    """Throw away every local edit (git restore .) so the next run starts from a clean tree.
+
+    The tools rewrite their own test sources in place, so without this the second run
+    in a long-lived container no longer starts from the committed baseline. Untracked
+    files (generated output, logs) are reported but left alone.
+    """
+    try:
+        tracked, untracked, status_res = _porcelain_status()
+        if tracked is None:
+            return jsonify({
+                "status": "error",
+                "message": "git status failed - is this a git checkout?",
+                "logs": status_res.stdout + "\n" + status_res.stderr,
+            }), 500
+
+        restore = _git("restore", ".")
+        after_tracked, _after_untracked, _ = _porcelain_status()
+
+        logs = [f"$ git restore .   (cwd: {TOOLS_DIR})"]
+        if restore.stdout.strip():
+            logs.append(restore.stdout.rstrip())
+        if restore.stderr.strip():
+            logs.append(restore.stderr.rstrip())
+
+        if tracked:
+            logs.append(f"restored {len(tracked)} modified file(s):")
+            logs.extend(f"  - {path}" for path in tracked)
+        else:
+            logs.append("nothing was modified - the tree was already clean")
+
+        if untracked:
+            logs.append(f"left {len(untracked)} untracked path(s) alone (generated output / logs):")
+            logs.extend(f"  ? {path}" for path in untracked)
+
+        remaining = after_tracked or []
+        if remaining:
+            logs.append(f"WARNING: {len(remaining)} file(s) are still modified:")
+            logs.extend(f"  ! {path}" for path in remaining)
+
+        return jsonify({
+            "status": "success" if restore.returncode == 0 and not remaining else "error",
+            "returncode": restore.returncode,
+            "command": "git restore .",
+            "restored": tracked,
+            "untracked": untracked,
+            "remaining": remaining,
+            "logs": "\n".join(logs),
+        })
+
+    except FileNotFoundError:
+        return jsonify({
+            "status": "error",
+            "message": "git is not available in this environment.",
+        }), 500
+    except Exception as e:
+        err_msg = traceback.format_exc()
+        print(f"Error resetting workspace:\n{err_msg}")
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "traceback": err_msg
+        }), 500
+
+
 if __name__ == '__main__':
     # Bind 0.0.0.0 so the container port mapping works
     app.run(host='0.0.0.0', port=8000)
