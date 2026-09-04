@@ -60,9 +60,14 @@ def generate_new_header(old_header_text: str, description: str) -> str:
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             max_output_tokens=2000,
+            thinking_config=types.ThinkingConfig(
+            thinking_level=types.ThinkingLevel.MINIMAL
+        ),
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         ),
     )
+    if not response.text:
+        raise RuntimeError(f"Gemini returned an empty response. Full response:\n{response}")
     text = response.text.strip()
     if text.startswith("```"):
         text = text.split("```")[1]

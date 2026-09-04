@@ -70,9 +70,14 @@ def nl_to_state_machine_md(description: str) -> str:
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
             max_output_tokens=2000,
+            thinking_config=types.ThinkingConfig(
+            thinking_level=types.ThinkingLevel.MINIMAL
+        ),
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)
         ),
     )
+    if not response.text:
+        raise RuntimeError(f"Gemini returned an empty response. Full response:\n{response}")
     return response.text.strip()
 
 def run_pipeline(md_path, cwd=None):
