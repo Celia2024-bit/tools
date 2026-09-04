@@ -79,6 +79,7 @@ def route_intent(description: str) -> dict:
 def resolve_path(path_str: str, default_path: Path = None) -> Path:
     """
     通用路径解析工具：无论输入是相对路径还是绝对路径，均解析为物理绝对路径。
+    python nl_dev_tool.py "Add trace and validate logging to every function under aspect_injector/test/src/hot, but skip AlphaEngine.cpp"
     """
     if not path_str:
         return default_path.resolve() if default_path else None
@@ -98,7 +99,9 @@ def resolve_path(path_str: str, default_path: Path = None) -> Path:
 
 
 def handle_state_machine(description: str, output: str, should_run: bool):
-    """处理状态机生成与编译运行流程"""
+    """处理状态机生成与编译运行流程
+    python  nl_dev_tool.py "An order processing system that starts in Pending, moves to Paid on PaymentReceived, and then moves to Completed on OrderDelivered."
+    """
     from nl_to_state_machine import nl_to_state_machine_md, run_pipeline
 
     default_out = STATE_MACHINE_DIR / "test" / "state_machine.md"
@@ -114,7 +117,8 @@ def handle_state_machine(description: str, output: str, should_run: bool):
 
 
 def handle_interface_sync(description: str, intent: dict, args, should_run: bool):
-    """处理接口变更与派生类同步流程"""
+    """处理接口变更与派生类同步流程
+    python nl_dev_tool.py "Update interface sync_interface/test/include/IObserver_old.h: remove OnConnected ,add OnError(int err_code) ,change Ondate(int id, double timestamp). Sync all derived classes under sync_interface/test/src""""
     from nl_to_new_interface import generate_new_header
 
     # 1. 提取路径字符串（优先取 AI 提取，其次取 CLI 参数）
