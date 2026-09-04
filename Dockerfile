@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# 1. 安装系统构建工具与 libclang
+# 1. 安装系统构建工具及 libclang
 RUN apt-get update && apt-get install -y \
     g++ \
     make \
@@ -22,15 +22,17 @@ RUN git clone https://github.com/Celia2024-bit/util.git /app/util
 
 WORKDIR /app/tools
 
-# 4. 安装 Python 依赖（含 GenAI、AST 库与 Flask 服务框架）
+# 4. 安装 Python 依赖
 RUN pip install --no-cache-dir \
     flask \
     flask-cors \
     requests \
     google-genai \
     jinja2 \
-    clang \
-    libclang
+    clang==14.0.6
+
+# 5. 自动应用 cindex.py 兼容性补丁（容错未知 CursorKind，如 350）
+RUN sed -i "s/raise ValueError('Unknown template argument kind %d' % id)/return CursorKind.UNEXPOSED_DECL/g" /usr/local/lib/python3.10/site-packages/clang/cindex.py
 
 EXPOSE 8000
 
