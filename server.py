@@ -58,6 +58,11 @@ DEFAULT_PROMPTS = {
 # Markers printed by nl_dev_tool.py (see its "progress reporting" section)
 TOOL_MARKER = re.compile(r"AI selected tool:\s*([a-z_]+)")
 ARTIFACT_MARKER = re.compile(r"artifact \[[^\]]*\]:\s*(.+?)\s*$", re.MULTILINE)
+REASON_MARKER = re.compile(r"^\s*->\s*reason:\s*(.+?)\s*$", re.MULTILINE)
+
+# Exit codes nl_dev_tool.py uses to separate "not my job" from "it broke"
+EXIT_UNSUPPORTED = 2
+EXIT_ROUTER_UNAVAILABLE = 3
 
 
 def _resolve_dirs(names):
@@ -262,12 +267,24 @@ def exec_tool():
         # Which tool did the AI router pick?
         match = TOOL_MARKER.search(logs)
         tool_detected = match.group(1) if match else None
+        reason_match = REASON_MARKER.search(logs)
+
+        # A request none of the three tools serves is a normal answer, not a failure
+        if res.returncode == 0:
+            status = "success"
+        elif res.returncode == EXIT_UNSUPPORTED or tool_detected == "unsupported":
+            status = "unsupported"
+        elif res.returncode == EXIT_ROUTER_UNAVAILABLE:
+            status = "router_unavailable"
+        else:
+            status = "error"
 
         response_data = {
-            "status": "success" if res.returncode == 0 else "error",
+            "status": status,
             "prompt": prompt,
             "tool": tool,
             "tool_detected": tool_detected,
+            "reason": reason_match.group(1) if reason_match else None,
             "returncode": res.returncode,
             "command": " ".join([Path(cmd[0]).name] + cmd[1:]),
             "logs": logs,

@@ -29,7 +29,21 @@ TOOL_LABELS = {
     "state_machine": "State Machine Generator",
     "interface_sync": "Interface Sync",
     "aspect_injector": "Aspect Injector",
+    "unsupported": "Out of scope",
 }
+
+# Shown when the router cannot map a request onto any of the three tools
+CAPABILITIES = [
+    ("state_machine", "generate a C++ state machine (spec, diagram, code) from a description",
+     "An order system that starts in Pending, moves to Paid on PaymentReceived, "
+     "then to Completed on OrderDelivered."),
+    ("interface_sync", "change a C++ interface header and sync every derived class",
+     "Update interface include/IObserver_old.h: remove OnConnected, add "
+     "OnError(int err_code). Sync all derived classes under test/src"),
+    ("aspect_injector", "inject or remove trace / validate / guard aspects in C++ sources",
+     "Add trace and validate logging to every function under test/src/hot, "
+     "but skip AlphaEngine.cpp"),
+]
 
 ROUTER_SYSTEM_PROMPT = """You are an intent router for C++ automation tools.
 Analyze the user's natural language request and determine which tool to use.
@@ -38,16 +52,25 @@ Tools available:
 1. "state_machine": User wants to create or update a state machine.
 2. "interface_sync": User wants to modify an existing C++ interface header and sync derived classes.
 3. "aspect_injector": User wants to inject or remove aspects.
+4. "unsupported": The request is anything else. These tools only generate and rewrite
+   C++ source code, so use "unsupported" for general questions (weather, news, math),
+   chit-chat, requests about other languages, or any task none of the three tools does.
+   Never force an unrelated request into one of the three tools.
 
 Rules:
 - Output JSON ONLY in this format:
 {
-  "tool": "state_machine" | "interface_sync" | "aspect_injector",
+  "tool": "state_machine" | "interface_sync" | "aspect_injector" | "unsupported",
   "old_header": "<path to old header if mentioned in description, else null>",
-  "src_dir": "<source directory for derived classes if mentioned, else null>"
+  "src_dir": "<source directory for derived classes if mentioned, else null>",
+  "reason": "<one short sentence; required when tool is unsupported, else null>"
 }
 - Do not wrap in markdown code fences.
 """
+
+# Exit codes, so the web service can tell these apart from a crash
+EXIT_UNSUPPORTED = 2
+EXIT_ROUTER_UNAVAILABLE = 3
 
 # --- progress reporting -------------------------------------------------------
 # The web dashboard pipes this stdout straight into its log panel and also
@@ -85,6 +108,25 @@ def rel_to_tools(path) -> str:
 
 def report_artifact(label: str, path) -> None:
     detail(f"artifact [{label}]: {rel_to_tools(path)}")
+
+
+def print_capabilities() -> None:
+    """Tell the user what this assistant can actually do."""
+    print("\nThis assistant only automates three C++ tasks:", flush=True)
+    for index, (name, what, example) in enumerate(CAPABILITIES, start=1):
+        print(f"  {index}. {name:<16} {what}", flush=True)
+        print(f"     example: \"{example}\"", flush=True)
+
+
+def handle_unsupported(description: str, reason: str) -> None:
+    """Answer a request that none of the three tools can serve, changing nothing."""
+    detail(f"reason: {reason or 'the request does not match any of the three C++ tools'}")
+    print("\nNo tool was run, so nothing was generated or modified.", flush=True)
+    print_capabilities()
+    print(
+        "\nRephrase the request in terms of one of the three tasks above and try again.",
+        flush=True,
+    )
 
 
 def route_intent(description: str) -> dict:
@@ -400,7 +442,18 @@ def main():
     print(f"  mode    : {'generate + run' if should_run else 'generate only (--no-run)'}", flush=True)
 
     step(1, f"Asking Gemini ({ROUTER_MODEL}) which tool this request needs...")
-    intent = route_intent(args.description)
+    try:
+        intent = route_intent(args.description)
+    except errors.APIError as e:
+        # Quota exhausted, bad key, service down: say so instead of dumping a traceback
+        message = getattr(e, "message", None) or str(e)
+        print(
+            f"\nThe Gemini router is unavailable: {getattr(e, 'code', '?')} {message}",
+            file=sys.stderr,
+        )
+        print("Nothing was generated or modified. Try again later.", file=sys.stderr)
+        sys.exit(EXIT_ROUTER_UNAVAILABLE)
+
     tool = intent.get("tool")
     detail(f"AI selected tool: {tool}  ({TOOL_LABELS.get(tool, 'unknown tool')})")
     detail(
@@ -415,8 +468,10 @@ def main():
     elif tool == "aspect_injector":
         handle_aspect_injector(args.description, args.output, should_run)
     else:
-        print(f"Error: Unknown intent: {tool}", file=sys.stderr)
-        sys.exit(1)
+        # "unsupported", or a tool name we do not know: never guess, never touch files
+        handle_unsupported(args.description, intent.get("reason"))
+        banner("OUT OF SCOPE - no tool was run")
+        sys.exit(EXIT_UNSUPPORTED)
 
     banner(f"COMPLETED - {TOOL_LABELS.get(tool, tool)}")
 

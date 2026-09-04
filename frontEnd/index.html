@@ -235,10 +235,14 @@
 
                     mermaidContainer.innerHTML = `<div class="mermaid">${data.mermaid}</div>`;
                     mermaid.run({ nodes: mermaidContainer.querySelectorAll('.mermaid') });
+                } else if (data.status === 'unsupported') {
+                    diagramBadge.innerText = 'Out of scope';
+                    diagramBadge.className = 'text-xs bg-amber-900 text-amber-300 px-2 py-0.5 rounded';
+                    mermaidContainer.innerHTML = `<span class="text-amber-300/80 text-sm text-center">${esc(data.reason || 'This request is not one of the three C++ tasks.')}<br><span class="text-slate-500">Nothing was generated or modified - see the log for what this tool can do.</span></span>`;
                 } else {
                     diagramBadge.innerText = 'No Graph Output';
                     diagramBadge.className = 'text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded';
-                    mermaidContainer.innerHTML = `<span class="text-slate-500 text-sm">Tool [${data.tool_detected || 'unknown'}] finished. No Mermaid chart generated.</span>`;
+                    mermaidContainer.innerHTML = `<span class="text-slate-500 text-sm">Tool [${esc(data.tool_detected || 'unknown')}] finished. No Mermaid chart generated.</span>`;
                 }
             } catch (err) {
                 logElement.innerText += `\n[ERROR] Request failed: ${err.message}`;
@@ -254,6 +258,14 @@
             state_machine: 'State Machine Generator',
             interface_sync: 'Interface Sync',
             aspect_injector: 'Aspect Injector',
+            unsupported: 'Out of scope',
+        };
+
+        // How each backend status reads in the summary strip
+        const STATUS_BADGE = {
+            success: { text: 'success', cls: 'bg-emerald-900 text-emerald-300' },
+            unsupported: { text: 'out of scope - nothing ran', cls: 'bg-amber-900 text-amber-300' },
+            router_unavailable: { text: 'AI router unavailable', cls: 'bg-amber-900 text-amber-300' },
         };
 
         function renderSummary(data) {
@@ -265,17 +277,16 @@
                 ? `AI picked: ${detected}`
                 : 'AI picked: (not reported)';
             const router = document.getElementById('sum-router');
-            router.innerText = TOOL_LABELS[detected] || 'unrouted';
-            router.className = detected
+            router.innerText = data.reason || TOOL_LABELS[detected] || 'unrouted';
+            router.className = detected && detected !== 'unsupported'
                 ? 'px-2 py-0.5 rounded bg-sky-900 text-sky-300'
                 : 'px-2 py-0.5 rounded bg-slate-700 text-slate-400';
 
             const statusEl = document.getElementById('sum-status');
-            const ok = data.status === 'success';
-            statusEl.innerText = ok ? 'success' : `error (exit ${data.returncode ?? '?'})`;
-            statusEl.className = ok
-                ? 'px-2 py-0.5 rounded bg-emerald-900 text-emerald-300'
-                : 'px-2 py-0.5 rounded bg-rose-900 text-rose-300';
+            const badge = STATUS_BADGE[data.status]
+                || { text: `error (exit ${data.returncode ?? '?'})`, cls: 'bg-rose-900 text-rose-300' };
+            statusEl.innerText = badge.text;
+            statusEl.className = `px-2 py-0.5 rounded ${badge.cls}`;
 
             const s = data.diff_summary || { files: 0, additions: 0, deletions: 0 };
             document.getElementById('sum-files').innerText = s.files;
