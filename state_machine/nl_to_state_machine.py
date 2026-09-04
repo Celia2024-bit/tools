@@ -75,6 +75,49 @@ def nl_to_state_machine_md(description: str) -> str:
     )
     return response.text.strip()
 
+def run_pipeline(md_path, cwd=None):
+    """
+    Run the existing table_to_json.py -> json_to_mermaid.py -> json_to_cpp.py
+    pipeline against an already-generated state_machine.md, then compile and
+    run the C++ test.
+
+    `cwd` lets a caller outside this tool's own directory (like
+    dev_assistant.py) point the subprocess calls at the right place, without
+    duplicating this logic. Left as None, subprocess uses the current
+    process's own working directory — the original standalone behaviour.
+    """
+    md_path = Path(md_path)
+    posix_md_path = md_path.as_posix()
+    filename = md_path.stem
+    json_path = f"./out/{filename}.json"
+
+    print(f"\nRunning Python pipeline on {posix_md_path}...\n")
+
+    # 1. Markdown -> JSON
+    subprocess.run([sys.executable, "table_to_json.py", posix_md_path], check=True, cwd=cwd)
+    # 2. JSON -> Mermaid
+    subprocess.run([sys.executable, "json_to_mermaid.py", json_path], check=True, cwd=cwd)
+    # 3. JSON -> C++ (包含 main.cpp 生成)
+    subprocess.run([sys.executable, "json_to_cpp.py", json_path, "-p", "Order"], check=True, cwd=cwd)
+
+    # 4. 编译并运行 C++ 测试
+    print("\n🔨 Compiling and Running C++ test...")
+    code_dir = Path("./out/code")
+    executable = code_dir / "test_sm.exe" if sys.platform == "win32" else code_dir / "test_sm"
+
+    compile_cmd = [
+        "g++", "-std=c++17",
+        str(code_dir / "main.cpp"),
+        str(code_dir / "OrderStateMachine.cpp"),
+        str(code_dir / "OrderHandler.cpp"),
+        "-o", str(executable)
+    ]
+    subprocess.run(compile_cmd, check=True, cwd=cwd)
+    subprocess.run([str(executable)], check=True, cwd=cwd)
+
+    print("\n✨ All operations completed successfully!")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate state_machine.md from a natural-language description.")
     parser.add_argument("description", help="Plain-English description of the state machine")
@@ -95,35 +138,7 @@ def main():
     print(f"\nWritten to {out_path}")
 
     if args.run:
-        posix_out_path = out_path.as_posix()
-        filename = out_path.stem
-        json_path = f"./out/{filename}.json"
-
-        print(f"\nRunning Python pipeline on {posix_out_path}...\n")
-        
-        # 1. Markdown -> JSON
-        subprocess.run([sys.executable, "table_to_json.py", posix_out_path], check=True)
-        # 2. JSON -> Mermaid
-        subprocess.run([sys.executable, "json_to_mermaid.py", json_path], check=True)
-        # 3. JSON -> C++ (包含 main.cpp 生成)
-        subprocess.run([sys.executable, "json_to_cpp.py", json_path, "-p", "Order"], check=True)
-
-        # 4. 编译并运行 C++ 测试
-        print("\n🔨 Compiling and Running C++ test...")
-        code_dir = Path("./out/code")
-        executable = code_dir / "test_sm.exe" if sys.platform == "win32" else code_dir / "test_sm"
-
-        compile_cmd = [
-            "g++", "-std=c++17",
-            str(code_dir / "main.cpp"),
-            str(code_dir / "OrderStateMachine.cpp"),
-            str(code_dir / "OrderHandler.cpp"),
-            "-o", str(executable)
-        ]
-        subprocess.run(compile_cmd, check=True)
-        subprocess.run([str(executable)], check=True)
-
-        print("\n✨ All operations completed successfully!")
+        run_pipeline(out_path)
 
 if __name__ == "__main__":
     main()
