@@ -106,21 +106,27 @@ def run_pipeline(md_path, cwd=None):
     subprocess.run([sys.executable, "json_to_cpp.py", json_path, "-p", "Order"], check=True, cwd=cwd)
 
     # 4. 编译并运行 C++ 测试
-    print("\n🔨 Compiling and Running C++ test...")
-    code_dir = Path("./out/code")
-    executable = code_dir / "test_sm.exe" if sys.platform == "win32" else code_dir / "test_sm"
+    # 1. 解析基础输出目录
+    out_dir = (Path(cwd) if cwd else Path.cwd()) / "out"
 
-    compile_cmd = [
-        "g++", "-std=c++17",
-        str(code_dir / "main.cpp"),
-        str(code_dir / "OrderStateMachine.cpp"),
-        str(code_dir / "OrderHandler.cpp"),
-        "-o", str(executable)
-    ]
+    # 2. 显式添加 .exe 后缀并转为标准的 Windows 绝对路径
+    exe_name = "test_runner.exe" if sys.platform == "win32" else "test_runner"
+    executable = (out_dir / exe_name).resolve()
+
+    # 3. 编译 C++ 文件
+    cpp_files = list((out_dir / "code").glob("*.cpp"))
+    compile_cmd = ["g++", "-std=c++17"] + [str(f) for f in cpp_files] + ["-o", str(executable)]
+
+    print(f"\n🔨 Compiling C++ test: {' '.join(compile_cmd)}")
     subprocess.run(compile_cmd, check=True, cwd=cwd)
-    subprocess.run([str(executable)], check=True, cwd=cwd)
 
-    print("\n✨ All operations completed successfully!")
+    # 4. 确保文件生成成功后再进行 CreateProcess 调用
+    if not executable.is_file():
+        raise FileNotFoundError(f"编译产物未找到: {executable}")
+
+    print(f"\n🚀 Running C++ test: {executable}")
+    # 传入 [str(executable)]，由于带有 .exe 且是完整绝对路径，WinAPI 即可正常加载
+    subprocess.run([str(executable)], check=True, cwd=cwd)
 
 
 def main():
