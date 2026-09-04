@@ -6,6 +6,7 @@ from pathlib import Path
 from clang import cindex
 
 from logger import Logger
+from libclang import configure as configure_libclang
 
 def cleanup_old_logs():
 
@@ -464,6 +465,13 @@ def process_file(
 
 
 def main():
+    #
+    # Must run before anything touches cindex.Index.create() — otherwise the
+    # OS loader may fail to find libclang.dll/.so/.dylib even though
+    # `pip install libclang` put it on disk. See libclang.py for why.
+    #
+    configure_libclang()
+
     cleanup_old_logs()
 
     parser = argparse.ArgumentParser()
