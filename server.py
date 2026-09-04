@@ -1,5 +1,7 @@
 # tools/server.py
 import os
+import re
+import sys
 import difflib
 import traceback
 from pathlib import Path
@@ -8,37 +10,58 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)  # 允许前端跨域直接请求
+CORS(app)  # let the frontend call this API cross-origin
 
 TOOLS_DIR = Path(__file__).resolve().parent
 
-# 保底 API Key（如果环境变量中没有设置）
+# Fallback API key (used only when the environment does not provide one)
 if not os.environ.get("GEMINI_API_KEY"):
-    os.environ["GEMINI_API_KEY"] = "你的真实_GEMINI_API_KEY"
+    os.environ["GEMINI_API_KEY"] = "your_real_GEMINI_API_KEY"
 
-# 只有这些后缀会被当成文本读给前端，其余（.exe/.o/...）一律跳过
+# Only these suffixes are read back as text for the frontend; anything else
+# (.exe, .o, ...) is skipped.
 TEXT_SUFFIXES = {
     ".h", ".hpp", ".hh", ".inl", ".c", ".cc", ".cxx", ".cpp",
     ".json", ".mmd", ".md", ".html", ".txt", ".j2", ".py", ".log",
 }
-# 单个文件内容上限，避免一次返回超大 JSON
+# Per-file cap, so one big file cannot blow up the JSON response
 MAX_FILE_BYTES = 256 * 1024
-# 忽略的目录名
+# Directory names never worth reporting
 SKIP_DIRS = {"__pycache__", ".git", "node_modules"}
 
-# 工具执行完成后要展示的“生成产物”目录
+# The AI router picks the sub-tool inside the child process, so we snapshot every
+# directory the tools may rewrite and diff whatever actually changed.
+WATCH_DIRS = ["aspect_injector/test", "sync_interface/test"]
+
+# Extra generated output to show, keyed by the tool name the router reports.
 ARTIFACT_DIRS = {
-    "sm": ["state_machine/out", "state_machine/output"],
+    "state_machine": ["state_machine/out", "state_machine/output"],
 }
-# 工具会就地改写的源码目录：执行前后各拍一次快照，用于生成 diff
-WATCH_DIRS = {
-    "aspect": ["aspect_injector/test"],
-    "interface": ["sync_interface/test"],
+
+# Presets used when a caller asks for a tool by name instead of sending a prompt.
+DEFAULT_PROMPTS = {
+    "sm": (
+        "An order processing system that starts in Pending, moves to Paid on "
+        "PaymentReceived, and then moves to Completed on OrderDelivered."
+    ),
+    "aspect": (
+        "Add trace and validate logging to every function under "
+        "aspect_injector/test/src, but skip AlphaEngine.cpp"
+    ),
+    "interface": (
+        "Update interface sync_interface/test/include/IObserver_old.h: remove "
+        "OnConnected, add OnError(int err_code), change OnData(int id, double "
+        "timestamp). Sync all derived classes under sync_interface/test/src"
+    ),
 }
+
+# Markers printed by nl_dev_tool.py (see its "progress reporting" section)
+TOOL_MARKER = re.compile(r"AI selected tool:\s*([a-z_]+)")
+ARTIFACT_MARKER = re.compile(r"artifact \[[^\]]*\]:\s*(.+?)\s*$", re.MULTILINE)
 
 
 def _resolve_dirs(names):
-    """把相对目录名解析为实际存在的绝对路径。"""
+    """Turn relative directory names into existing absolute paths."""
     dirs = []
     for name in names:
         path = (TOOLS_DIR / name).resolve()
@@ -67,7 +90,7 @@ def _rel(path):
 
 
 def _read_text(path):
-    """读取文本文件，返回 (内容, 是否被截断)；不可读时返回 (None, False)。"""
+    """Read a text file and return (content, truncated); (None, False) if unreadable."""
     try:
         raw = path.read_bytes()
     except OSError:
@@ -82,7 +105,7 @@ def _read_text(path):
 
 
 def _snapshot(dirs):
-    """记录目录下所有文本文件的内容，key 为相对 tools/ 的路径。"""
+    """Record the content of every text file below dirs, keyed by tools-relative path."""
     snap = {}
     for path in _iter_text_files(dirs):
         content, _ = _read_text(path)
@@ -103,7 +126,7 @@ def _unified(rel_path, before, after):
 
 
 def _build_diffs(before, after):
-    """对比两次快照，生成 git diff 风格的结果。"""
+    """Compare two snapshots and produce git-diff style entries."""
     diffs = []
     for rel_path in sorted(set(before) | set(after)):
         old = before.get(rel_path)
@@ -137,36 +160,57 @@ def _build_diffs(before, after):
             "deletions": deletions,
             "diff": text,
         })
-    # 改动大的文件排前面
+    # Biggest changes first
     diffs.sort(key=lambda d: -(d["additions"] + d["deletions"]))
     return diffs
 
 
-def _collect_artifacts(dirs):
-    """收集生成的文件内容，供前端折叠展示。"""
+def _artifact_entry(path):
+    """Describe one generated file for the frontend, or None if it is not readable text."""
+    if path.suffix.lower() not in TEXT_SUFFIXES or not path.is_file():
+        return None
+    content, truncated = _read_text(path)
+    if content is None:
+        return None
+    return {
+        "path": _rel(path),
+        "name": path.name,
+        "ext": path.suffix.lower().lstrip("."),
+        "size": path.stat().st_size,
+        "lines": content.count("\n") + 1,
+        "truncated": truncated,
+        "content": content,
+    }
+
+
+def _collect_artifacts(dirs, extra_files=()):
+    """Collect generated file contents so the frontend can show them collapsed."""
+    paths = list(_iter_text_files(dirs))
+    paths.extend(extra_files)
+
     artifacts = []
-    for path in _iter_text_files(dirs):
-        content, truncated = _read_text(path)
-        if content is None:
+    seen = set()
+    for path in paths:
+        resolved = path.resolve()
+        if resolved in seen:
             continue
-        artifacts.append({
-            "path": _rel(path),
-            "name": path.name,
-            "ext": path.suffix.lower().lstrip("."),
-            "size": path.stat().st_size,
-            "lines": content.count("\n") + 1,
-            "truncated": truncated,
-            "content": content,
-        })
+        seen.add(resolved)
+        entry = _artifact_entry(resolved)
+        if entry:
+            artifacts.append(entry)
+
     artifacts.sort(key=lambda a: a["path"])
     return artifacts
 
 
-def _tools_for(tool):
-    """把 all 展开成具体工具列表。"""
-    if tool == "all":
-        return ["sm", "aspect", "interface"]
-    return [tool]
+def _artifact_paths_from_logs(logs):
+    """Pull the paths nl_dev_tool.py reported as artifacts out of its stdout."""
+    paths = []
+    for raw in ARTIFACT_MARKER.findall(logs):
+        path = (TOOLS_DIR / raw).resolve() if not Path(raw).is_absolute() else Path(raw).resolve()
+        if path.is_file():
+            paths.append(path)
+    return paths
 
 
 @app.route('/exec', methods=['GET', 'POST'])
@@ -179,40 +223,57 @@ def exec_tool():
 
     try:
         payload = request.json or {}
-        tool = payload.get('tool', 'sm')
-        file_path = payload.get('file')
-        src_file = payload.get('src')
+        # The natural-language request drives everything; `tool` only selects a preset.
+        prompt = (payload.get('prompt') or payload.get('description') or '').strip()
+        tool = payload.get('tool')
+        if not prompt:
+            prompt = DEFAULT_PROMPTS.get(tool, '').strip()
+        if not prompt:
+            return jsonify({
+                "status": "error",
+                "message": "Send a natural-language 'prompt', or a 'tool' in "
+                           f"{sorted(DEFAULT_PROMPTS)} to use its preset prompt.",
+            }), 400
 
-        selected = _tools_for(tool)
-
-        # 执行前快照（只针对会就地改写源码的工具）
-        watch_dirs = _resolve_dirs(
-            [d for name in selected for d in WATCH_DIRS.get(name, [])]
-        )
+        # Snapshot before the run, so we can diff whatever the tools rewrite in place
+        watch_dirs = _resolve_dirs(WATCH_DIRS)
         before = _snapshot(watch_dirs)
 
-        cmd = ["python3", "test_runner.py", "--tool", tool]
-        if file_path:
-            cmd.extend(["--file", file_path])
-        if src_file:
-            cmd.extend(["--src", src_file])
+        # Run with the same interpreter as this server, not a bare "python3" that
+        # could resolve to a different install
+        cmd = [sys.executable, "nl_dev_tool.py", prompt]
+        if payload.get('old'):
+            cmd.extend(["--old", payload['old']])
+        if payload.get('src'):
+            cmd.extend(["--src", payload['src']])
+        if payload.get('output'):
+            cmd.extend(["-o", payload['output']])
+        if payload.get('no_run'):
+            cmd.append("--no-run")
 
-        # 强制子进程用 UTF-8 输出，否则工具日志里的 emoji 在非 UTF-8 环境下会直接崩掉
+        # Force UTF-8 in the child, otherwise non-UTF-8 consoles kill the whole run
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
         res = subprocess.run(
             cmd, capture_output=True, text=True,
             encoding="utf-8", errors="replace", env=env, cwd=TOOLS_DIR,
         )
+        logs = res.stdout + "\n" + res.stderr
+
+        # Which tool did the AI router pick?
+        match = TOOL_MARKER.search(logs)
+        tool_detected = match.group(1) if match else None
 
         response_data = {
             "status": "success" if res.returncode == 0 else "error",
+            "prompt": prompt,
             "tool": tool,
+            "tool_detected": tool_detected,
             "returncode": res.returncode,
-            "command": " ".join(cmd),
-            "logs": res.stdout + "\n" + res.stderr,
+            "command": " ".join([Path(cmd[0]).name] + cmd[1:]),
+            "logs": logs,
         }
 
-        # 执行后快照 -> git diff 风格的改动列表
+        # Snapshot after the run -> git-diff style change list
         after = _snapshot(watch_dirs)
         diffs = _build_diffs(before, after)
         response_data["diffs"] = diffs
@@ -222,17 +283,23 @@ def exec_tool():
             "deletions": sum(d["deletions"] for d in diffs),
         }
 
-        # 生成产物（状态机的 json/mmd/html/code 等），前端折叠后按需展开
-        artifact_dirs = _resolve_dirs(
-            [d for name in selected for d in ARTIFACT_DIRS.get(name, [])]
-        )
-        response_data["artifacts"] = _collect_artifacts(artifact_dirs)
+        # Generated output, collapsed in the frontend until the user expands it
+        artifact_dirs = _resolve_dirs(ARTIFACT_DIRS.get(tool_detected, []))
+        reported = _artifact_paths_from_logs(logs)
+        response_data["artifacts"] = _collect_artifacts(artifact_dirs, reported)
 
-        # 如果是状态机，直接把生成的 Mermaid 图解析返给前端
-        mmd_file = TOOLS_DIR / "state_machine" / "out" / "state_machine.mmd"
-        if tool in ["sm", "async", "all"] and mmd_file.exists():
-            with open(mmd_file, "r", encoding="utf-8") as f:
-                response_data["mermaid"] = f.read()
+        # For state machines, hand the generated Mermaid diagram straight to the
+        # frontend. The pipeline names it after the spec, so resolve it from the spec
+        # this run reported - the out/ directory can still hold older diagrams.
+        if tool_detected == "state_machine":
+            out_dir = TOOLS_DIR / "state_machine" / "out"
+            candidates = [out_dir / f"{p.stem}.mmd" for p in reported
+                          if p.suffix.lower() == ".md"]
+            candidates.append(out_dir / "state_machine.mmd")
+            for mmd_file in candidates:
+                if mmd_file.exists():
+                    response_data["mermaid"] = mmd_file.read_text(encoding="utf-8")
+                    break
 
         return jsonify(response_data)
 
@@ -246,5 +313,5 @@ def exec_tool():
         }), 500
 
 if __name__ == '__main__':
-    # 绑定 0.0.0.0 以便容器外部接入
+    # Bind 0.0.0.0 so the container port mapping works
     app.run(host='0.0.0.0', port=8000)

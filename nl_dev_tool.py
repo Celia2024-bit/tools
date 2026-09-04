@@ -1,4 +1,5 @@
 import argparse
+import difflib
 import json
 import os
 import subprocess
@@ -7,7 +8,7 @@ from pathlib import Path
 from google.genai import errors
 import time
 
-# 确保脚本所在目录及各子工具目录优先在 Python 搜索路径中
+# Make sure this directory and every sub-tool directory come first on the import path
 TOOLS_DIR = Path(__file__).resolve().parent
 STATE_MACHINE_DIR = TOOLS_DIR / "state_machine"
 SYNC_INTERFACE_DIR = TOOLS_DIR / "sync_interface"
@@ -21,6 +22,14 @@ from google import genai
 from google.genai import types
 
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+
+ROUTER_MODEL = "gemini-3.6-flash"
+
+TOOL_LABELS = {
+    "state_machine": "State Machine Generator",
+    "interface_sync": "Interface Sync",
+    "aspect_injector": "Aspect Injector",
+}
 
 ROUTER_SYSTEM_PROMPT = """You are an intent router for C++ automation tools.
 Analyze the user's natural language request and determine which tool to use.
@@ -40,16 +49,54 @@ Rules:
 - Do not wrap in markdown code fences.
 """
 
+# --- progress reporting -------------------------------------------------------
+# The web dashboard pipes this stdout straight into its log panel and also
+# scrapes two markers out of it, so keep these two line shapes stable:
+#   "-> AI selected tool: <tool>"
+#   "-> artifact [<label>]: <path>"     (the path is always last on the line)
+# Plain ASCII only: this output gets captured by consoles that are not UTF-8.
+STEP_TOTAL = 3
+
+
+def banner(title: str) -> None:
+    bar = "=" * 62
+    print(f"\n{bar}\n  {title}\n{bar}", flush=True)
+
+
+def step(index: int, message: str) -> None:
+    print(f"\n[{index}/{STEP_TOTAL}] {message}", flush=True)
+
+
+def detail(message: str) -> None:
+    print(f"      -> {message}", flush=True)
+
+
+def bullet(message: str) -> None:
+    print(f"         {message}", flush=True)
+
+
+def rel_to_tools(path) -> str:
+    """Shorten a path for logging, relative to the tools/ directory when possible."""
+    try:
+        return Path(path).resolve().relative_to(TOOLS_DIR).as_posix()
+    except (ValueError, OSError):
+        return str(path)
+
+
+def report_artifact(label: str, path) -> None:
+    detail(f"artifact [{label}]: {rel_to_tools(path)}")
+
 
 def route_intent(description: str) -> dict:
     """Use Gemini to quickly determine which sub-tool to invoke, with auto-retry for 429 quota errors."""
     max_retries = 3
-    retry_delay = 5  # 秒
+    retry_delay = 5  # seconds
 
     for attempt in range(max_retries):
+        started = time.time()
         try:
             response = client.models.generate_content(
-                model="gemini-3.6-flash",
+                model=ROUTER_MODEL,
                 contents=description,
                 config=types.GenerateContentConfig(
                     system_instruction=ROUTER_SYSTEM_PROMPT,
@@ -65,41 +112,130 @@ def route_intent(description: str) -> dict:
                 text = text.split("```")[1]
                 if text.startswith("json"):
                     text = text[4:]
-            return json.loads(text.strip())
+            intent = json.loads(text.strip())
+            detail(f"Gemini answered in {time.time() - started:.1f}s")
+            return intent
 
         except errors.ClientError as e:
             if e.code == 429 and attempt < max_retries - 1:
-                print(f"⚠️ Gemini API rate limit hit (429). Retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                detail(
+                    f"Gemini rate limit (429), retrying in {retry_delay}s "
+                    f"(attempt {attempt + 1}/{max_retries})"
+                )
                 time.sleep(retry_delay)
-                retry_delay *= 2  # 退避时间翻倍
+                retry_delay *= 2  # exponential backoff
             else:
                 raise e
 
 
 def resolve_path(path_str: str, default_path: Path = None) -> Path:
     """
-    通用路径解析工具：无论输入是相对路径还是绝对路径，均解析为物理绝对路径。
+    Resolve any user-supplied path to a physical absolute path, relative or not.
     python nl_dev_tool.py "Add trace and validate logging to every function under aspect_injector/test/src/hot, but skip AlphaEngine.cpp"
     """
     if not path_str:
         return default_path.resolve() if default_path else None
 
     p = Path(path_str)
-    # 如果是相对路径，基于当前终端执行目录（Path.cwd()）转换为绝对路径
+    # A relative path is resolved against the directory the command was run from
     if not p.is_absolute():
         p = (Path.cwd() / p).resolve()
     else:
         p = p.resolve()
 
-    # 如果解析后的路径不存在，且有默认路径，则降级使用默认路径
+    # Fall back to the default when the resolved path does not exist
     if not p.exists() and default_path and default_path.exists():
         return default_path.resolve()
 
     return p
 
 
+def markdown_table_rows(md_text: str, section_title: str) -> list:
+    """Return the data rows (as cell lists) of the '## <section_title>' markdown table."""
+    rows = []
+    in_section = False
+
+    for line in md_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            in_section = stripped.lstrip("#").strip().lower() == section_title.lower()
+            continue
+        if not in_section or not stripped.startswith("|"):
+            continue
+
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if all(set(c) <= set("-: ") for c in cells):
+            continue  # separator row
+        if cells and cells[0].startswith("**"):
+            continue  # header row
+        rows.append(cells)
+
+    return rows
+
+
+def summarize_state_machine_spec(md_text: str) -> None:
+    """Log what the model actually designed, so the output shows real AI decisions."""
+    try:
+        states = [r[1] for r in markdown_table_rows(md_text, "State Definition Table") if len(r) > 1]
+        transitions = markdown_table_rows(md_text, "State Transition Table")
+        events = [r[2] for r in transitions if len(r) > 2]
+        context_fields = markdown_table_rows(md_text, "Context Definition Table")
+    except Exception as e:
+        detail(f"could not summarize the generated spec: {e}")
+        return
+
+    if states:
+        detail(f"AI designed {len(states)} states: {', '.join(states)}")
+    if transitions:
+        unique_events = list(dict.fromkeys(events))
+        detail(f"AI designed {len(transitions)} transitions on events: {', '.join(unique_events)}")
+    if context_fields:
+        detail(f"AI designed {len(context_fields)} context field(s)")
+
+
+def summarize_header_rewrite(old_text: str, new_text: str) -> None:
+    """Log the interface lines the model added or dropped."""
+    changed = [
+        line for line in difflib.unified_diff(
+            old_text.splitlines(), new_text.splitlines(), lineterm="", n=0
+        )
+        if line[:1] in ("+", "-") and not line.startswith(("+++", "---"))
+    ]
+    additions = sum(1 for line in changed if line.startswith("+"))
+    detail(f"AI rewrote the interface: +{additions} / -{len(changed) - additions} lines")
+
+    for line in changed[:20]:
+        bullet(line)
+    if len(changed) > 20:
+        bullet(f"... {len(changed) - 20} more changed lines")
+
+
+def summarize_aspect_config(config_data: dict) -> None:
+    """Log the rules the model derived from the request."""
+    for section in ("inject", "remove", "exclude"):
+        rules = config_data.get(section) or []
+        if not rules:
+            continue
+
+        detail(f"AI produced {len(rules)} {section} rule(s)")
+        for rule in rules:
+            parts = []
+            if rule.get("directory"):
+                parts.append(f"dir={rel_to_tools(rule['directory'])}")
+            for key in ("file", "base_class", "function"):
+                if rule.get(key):
+                    parts.append(f"{key}={rule[key]}")
+            if rule.get("inject_type"):
+                parts.append(f"types=[{', '.join(rule['inject_type'])}]")
+            bullet(f"- {'  '.join(parts) if parts else '(match everything)'}")
+
+    include_dirs = config_data.get("include_dirs") or []
+    if include_dirs:
+        detail(f"include_dirs: {', '.join(rel_to_tools(d) for d in include_dirs)}")
+
+
 def handle_state_machine(description: str, output: str, should_run: bool):
-    """处理状态机生成与编译运行流程
+    """Generate a state machine spec from plain English, then build and run it.
     python  nl_dev_tool.py "An order processing system that starts in Pending, moves to Paid on PaymentReceived, and then moves to Completed on OrderDelivered."
     """
     from nl_to_state_machine import nl_to_state_machine_md, run_pipeline
@@ -108,39 +244,56 @@ def handle_state_machine(description: str, output: str, should_run: bool):
     out_path = resolve_path(output, default_out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    step(2, "Gemini is drafting the state machine specification...")
+    started = time.time()
     md_content = nl_to_state_machine_md(description)
-    out_path.write_text(md_content, encoding="utf-8")
-    print(f"📄 State machine spec written to: {out_path}")
+    detail(f"spec drafted in {time.time() - started:.1f}s ({len(md_content.splitlines())} lines)")
+    summarize_state_machine_spec(md_content)
 
-    if should_run:
-        run_pipeline(out_path, cwd=STATE_MACHINE_DIR)
+    out_path.write_text(md_content, encoding="utf-8")
+    report_artifact("state machine spec", out_path)
+
+    if not should_run:
+        step(3, "Pipeline skipped (--no-run): the spec was generated only.")
+        return
+
+    step(3, "Running the deterministic pipeline: markdown -> json -> mermaid -> C++ ...")
+    run_pipeline(out_path, cwd=STATE_MACHINE_DIR)
 
 
 def handle_interface_sync(description: str, intent: dict, args, should_run: bool):
-    """处理接口变更与派生类同步流程
-    python nl_dev_tool.py "Update interface sync_interface/test/include/IObserver_old.h: remove OnConnected ,add OnError(int err_code) ,change Ondate(int id, double timestamp). Sync all derived classes under sync_interface/test/src""""
+    """Rewrite an interface header and sync every derived class.
+    python nl_dev_tool.py "Update interface sync_interface/test/include/IObserver_old.h: remove OnConnected, add OnError(int err_code), change OnData(int id, double timestamp). Sync all derived classes under sync_interface/test/src"
+    """
     from nl_to_new_interface import generate_new_header
 
-    # 1. 提取路径字符串（优先取 AI 提取，其次取 CLI 参数）
+    # 1. Pick the paths: what the AI extracted wins, CLI arguments are the fallback
     raw_old = intent.get("old_header") or args.old
     raw_src = intent.get("src_dir") or args.src
 
-    # 2. 转换为绝对路径（兼容绝对路径与基于终端位置的相对路径）
+    # 2. Turn them into absolute paths (accepts absolute paths and paths relative to the shell cwd)
     default_src = SYNC_INTERFACE_DIR / "test" / "src"
     src_dir = resolve_path(raw_src, default_src)
 
     if not raw_old:
-        print("❌ Error: Interface sync requires old header path. Mention it in description or use `--old <path>`.", file=sys.stderr)
+        print("Error: Interface sync requires old header path. Mention it in description or use `--old <path>`.", file=sys.stderr)
         sys.exit(1)
 
     old_path = resolve_path(raw_old)
     if not old_path or not old_path.is_file():
-        print(f"❌ Error: Old header file not found at: {old_path}", file=sys.stderr)
+        print(f"Error: Old header file not found at: {old_path}", file=sys.stderr)
         sys.exit(1)
 
-    # 3. 生成新头文件
+    # 3. Generate the new header
+    step(2, "Gemini is rewriting the interface header...")
+    detail(f"old header: {rel_to_tools(old_path)}")
+    detail(f"derived class root: {rel_to_tools(src_dir)}")
+
     old_text = old_path.read_text(encoding="utf-8")
+    started = time.time()
     new_text = generate_new_header(old_text, description)
+    detail(f"header generated in {time.time() - started:.1f}s")
+    summarize_header_rewrite(old_text, new_text)
 
     if args.output:
         new_path = resolve_path(args.output)
@@ -150,72 +303,83 @@ def handle_interface_sync(description: str, intent: dict, args, should_run: bool
         new_path = old_path.with_name(f"{new_stem}{old_path.suffix}")
 
     new_path.write_text(new_text, encoding="utf-8")
-    print(f"📄 Updated header written to: {new_path}")
+    report_artifact("updated header", new_path)
 
-    # 4. 执行底层同步脚本（全部使用绝对路径传参）
-    if should_run:
-        abs_old = str(old_path)
-        abs_new = str(new_path)
-        abs_src = str(src_dir)
+    # 4. Run the underlying sync script (always with absolute paths)
+    if not should_run:
+        step(3, "Sync skipped (--no-run): the header was generated only.")
+        return
 
-        print(f"\nRunning interface_sync.py --old {abs_old} --new {abs_new} --src {abs_src}...\n")
-        subprocess.run([
-            sys.executable, str(SYNC_INTERFACE_DIR / "interface_sync.py"),
-            "--old", abs_old,
-            "--new", abs_new,
-            "--src", abs_src
-        ], check=True, cwd=SYNC_INTERFACE_DIR)
+    abs_old = str(old_path)
+    abs_new = str(new_path)
+    abs_src = str(src_dir)
+
+    step(3, f"Propagating the change to every derived class under {rel_to_tools(src_dir)} ...")
+    detail(f"interface_sync.py --old {abs_old} --new {abs_new} --src {abs_src}")
+    subprocess.run([
+        sys.executable, str(SYNC_INTERFACE_DIR / "interface_sync.py"),
+        "--old", abs_old,
+        "--new", abs_new,
+        "--src", abs_src
+    ], check=True, cwd=SYNC_INTERFACE_DIR)
 
 
 def handle_aspect_injector(description: str, output: str, should_run: bool):
-    """处理切面配置生成与注入流程"""
+    """Turn plain English into an aspect config, then inject or remove the aspects."""
     from nl_to_aspect_config import nl_to_config_json
 
     default_out = ASPECT_INJECTOR_DIR / "config.json"
     out_path = resolve_path(output, default_out)
 
+    step(2, "Gemini is translating the request into an aspect injection config...")
+    started = time.time()
     config_str = nl_to_config_json(description)
-    
-    # 解析并修正 config 中的 directory 路径
+    detail(f"config generated in {time.time() - started:.1f}s")
+
+    # Normalize the directory paths inside the generated config
     try:
         config_data = json.loads(config_str)
-        
-        # 递归清洗/修整目录路径
+
+        # Rewrite every rule directory into an absolute path
         def clean_dir(target_list):
             for item in target_list:
                 d = item.get("directory", "")
                 if d:
-                    # 如果包含了 aspect_injector/ 前缀，自动剥离掉
+                    # Strip a leading "aspect_injector/" prefix if the model added one
                     p = Path(d)
                     parts = p.parts
                     if len(parts) > 0 and parts[0] == "aspect_injector":
                         d = str(Path(*parts[1:]))
-                    
-                    # 转换为针对 ASPECT_INJECTOR_DIR 的绝对路径，彻底避免 cwd 错位
+
+                    # Make it absolute against ASPECT_INJECTOR_DIR so cwd can never matter
                     abs_dir = (ASPECT_INJECTOR_DIR / d).resolve()
                     if abs_dir.exists():
                         item["directory"] = str(abs_dir)
                     else:
                         item["directory"] = d
 
-        if "inject" in config_data:
-            clean_dir(config_data["inject"])
-        if "exclude" in config_data:
-            clean_dir(config_data["exclude"])
+        for section in ("inject", "remove", "exclude"):
+            if section in config_data:
+                clean_dir(config_data[section])
 
+        summarize_aspect_config(config_data)
         config_str = json.dumps(config_data, indent=2)
     except Exception as e:
-        print(f"⚠️ Warning: Config path normalization failed: {e}")
+        print(f"Warning: Config path normalization failed: {e}")
 
     out_path.write_text(config_str, encoding="utf-8")
-    print(f"📄 Aspect config written to: {out_path}")
+    report_artifact("aspect config", out_path)
 
-    if should_run:
-        print(f"\nRunning aspect_injector.py --config {out_path}...\n")
-        subprocess.run([
-            sys.executable, str(ASPECT_INJECTOR_DIR / "aspect_injector.py"),
-            "--config", str(out_path)
-        ], check=True, cwd=ASPECT_INJECTOR_DIR)
+    if not should_run:
+        step(3, "Injection skipped (--no-run): the config was generated only.")
+        return
+
+    step(3, "Running the libclang-based injector over the matched sources...")
+    detail(f"aspect_injector.py --config {out_path}")
+    subprocess.run([
+        sys.executable, str(ASPECT_INJECTOR_DIR / "aspect_injector.py"),
+        "--config", str(out_path)
+    ], check=True, cwd=ASPECT_INJECTOR_DIR)
 
 
 def main():
@@ -231,10 +395,18 @@ def main():
 
     should_run = not args.no_run
 
-    print("🧠 Analyzing intent with Gemini...")
+    banner("AI C++ DEV ASSISTANT")
+    print(f"  request : {args.description}", flush=True)
+    print(f"  mode    : {'generate + run' if should_run else 'generate only (--no-run)'}", flush=True)
+
+    step(1, f"Asking Gemini ({ROUTER_MODEL}) which tool this request needs...")
     intent = route_intent(args.description)
     tool = intent.get("tool")
-    print(f"🎯 Detected tool target: [{tool}]\n")
+    detail(f"AI selected tool: {tool}  ({TOOL_LABELS.get(tool, 'unknown tool')})")
+    detail(
+        f"AI extracted hints: old_header={intent.get('old_header') or '<none>'}, "
+        f"src_dir={intent.get('src_dir') or '<none>'}"
+    )
 
     if tool == "state_machine":
         handle_state_machine(args.description, args.output, should_run)
@@ -243,8 +415,10 @@ def main():
     elif tool == "aspect_injector":
         handle_aspect_injector(args.description, args.output, should_run)
     else:
-        print(f"❌ Unknown intent: {tool}", file=sys.stderr)
+        print(f"Error: Unknown intent: {tool}", file=sys.stderr)
         sys.exit(1)
+
+    banner(f"COMPLETED - {TOOL_LABELS.get(tool, tool)}")
 
 
 if __name__ == "__main__":
