@@ -530,24 +530,20 @@ tbody td code { white-space: nowrap; }
 .index-note strong { color: var(--text); }
 .index-note p:last-child { margin-bottom: 0; }
 
-/* ---------- index page: AI console section ----------
+/* ---------- AI assistant page ----------
    Keeps the default blue accent, so it reads as its own thing next to the
-   four tool colours. */
+   four tool colours. Wider than .story-page: the embedded console needs the
+   room to reach its own two-column breakpoint. */
 
-.ai-section {
-  margin: 0 0 80px;
-  padding-top: 36px;
-  border-top: 1px solid var(--line-soft);
+.ai-page {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 46px 0 96px;
 }
-.ai-section h2 {
-  font-size: clamp(24px, 3.2vw, 33px);
-  line-height: 1.2;
-  letter-spacing: -0.022em;
-  margin: 0 0 14px;
-  font-weight: 660;
-  color: #fff;
-}
-.ai-section .lede { max-width: 80ch; }
+
+/* full-width teaser on the overview page, styled as one wide card */
+.ai-teaser { margin: 0 0 70px; }
+.ai-teaser p { max-width: 92ch; }
 
 .ai-prompt {
   font-family: var(--mono);
