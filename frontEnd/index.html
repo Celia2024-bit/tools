@@ -77,17 +77,15 @@
             <code id="sum-cmd" class="ml-auto text-slate-500 font-mono"></code>
         </div>
 
-        <!-- Main Display Panel -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Main Display Panel: the diagram half only exists once a diagram was generated -->
+        <div id="main-grid" class="grid grid-cols-1 gap-6">
             <!-- Mermaid Diagram Display Section -->
-            <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 flex flex-col h-[500px]">
+            <div id="diagram-panel" style="display:none" class="bg-slate-800 border border-slate-700 rounded-lg p-4 flex flex-col h-[500px]">
                 <h2 class="text-sm font-semibold text-slate-300 mb-3 border-b border-slate-700 pb-2 flex justify-between items-center">
                     <span>Mermaid State Diagram</span>
                     <span id="diagram-badge" class="text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-400">Idle</span>
                 </h2>
-                <div id="mermaid-container" class="flex-1 overflow-auto bg-slate-900 rounded p-4 flex items-center justify-center text-slate-500 text-sm">
-                    Select 'State Machine' tool to render diagram.
-                </div>
+                <div id="mermaid-container" class="flex-1 overflow-auto bg-slate-900 rounded p-4 flex items-center justify-center text-slate-500 text-sm"></div>
             </div>
 
             <!-- Terminal Logs Output -->
@@ -145,7 +143,8 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8080';
+       // const API_BASE = 'http://localhost:8080';
+        const API_BASE = 'https://tools-wzq3.onrender.com';
         const API_URL = `${API_BASE}/exec`;
         const RESET_URL = `${API_BASE}/reset`;
 
@@ -198,6 +197,16 @@
             return runTool(prompt);
         }
 
+        // The diagram panel only makes sense for the state machine tool, so it is
+        // removed from the layout entirely the rest of the time and the log panel
+        // takes the full width.
+        function setDiagramVisible(visible) {
+            document.getElementById('diagram-panel').style.display = visible ? 'flex' : 'none';
+            document.getElementById('main-grid').className = visible
+                ? 'grid grid-cols-1 lg:grid-cols-2 gap-6'
+                : 'grid grid-cols-1 gap-6';
+        }
+
         async function runTool(prompt) {
             const logElement = document.getElementById('log-output');
             const mermaidContainer = document.getElementById('mermaid-container');
@@ -207,7 +216,8 @@
             runBtn.disabled = true;
             runBtn.innerText = 'Running...';
             logElement.innerText = `[INFO] Sending request to the AI router...\n[INFO] ${prompt}\n`;
-            diagramBadge.innerText = 'Processing...';
+            setDiagramVisible(false);
+            mermaidContainer.innerHTML = '';
             lastArtifacts = [];
             lastDiffs = [];
             renderArtifacts();
@@ -229,25 +239,19 @@
                 renderArtifacts();
                 renderDiffs();
 
+                // Only a state machine run returns a diagram; every other outcome
+                // (out of scope, router down, another tool) is already reported by the
+                // summary strip and the log, so the panel stays hidden.
                 if (data.mermaid) {
                     diagramBadge.innerText = 'Rendered';
                     diagramBadge.className = 'text-xs bg-emerald-900 text-emerald-300 px-2 py-0.5 rounded';
 
                     mermaidContainer.innerHTML = `<div class="mermaid">${data.mermaid}</div>`;
+                    setDiagramVisible(true);
                     mermaid.run({ nodes: mermaidContainer.querySelectorAll('.mermaid') });
-                } else if (data.status === 'unsupported') {
-                    diagramBadge.innerText = 'Out of scope';
-                    diagramBadge.className = 'text-xs bg-amber-900 text-amber-300 px-2 py-0.5 rounded';
-                    mermaidContainer.innerHTML = `<span class="text-amber-300/80 text-sm text-center">${esc(data.reason || 'This request is not one of the three C++ tasks.')}<br><span class="text-slate-500">Nothing was generated or modified - see the log for what this tool can do.</span></span>`;
-                } else {
-                    diagramBadge.innerText = 'No Graph Output';
-                    diagramBadge.className = 'text-xs bg-slate-700 text-slate-400 px-2 py-0.5 rounded';
-                    mermaidContainer.innerHTML = `<span class="text-slate-500 text-sm">Tool [${esc(data.tool_detected || 'unknown')}] finished. No Mermaid chart generated.</span>`;
                 }
             } catch (err) {
                 logElement.innerText += `\n[ERROR] Request failed: ${err.message}`;
-                diagramBadge.innerText = 'Error';
-                diagramBadge.className = 'text-xs bg-rose-900 text-rose-300 px-2 py-0.5 rounded';
             } finally {
                 runBtn.disabled = false;
                 runBtn.innerText = 'Run';
@@ -352,6 +356,7 @@
             if (!a) return;
             const container = document.getElementById('mermaid-container');
             container.innerHTML = `<div class="mermaid">${a.content}</div>`;
+            setDiagramVisible(true);   // a .mmd artifact was asked for, so bring the panel back
             mermaid.run({ nodes: container.querySelectorAll('.mermaid') });
             const badge = document.getElementById('diagram-badge');
             badge.innerText = a.name;
@@ -446,8 +451,8 @@
                     renderDiffs();
                     renderArtifacts();
                     document.getElementById('summary-bar').style.display = 'none';
-                    document.getElementById('mermaid-container').innerHTML =
-                        '<span class="text-slate-500 text-sm">Workspace restored. Run a tool to render a diagram.</span>';
+                    document.getElementById('mermaid-container').innerHTML = '';
+                    setDiagramVisible(false);
                     const badge = document.getElementById('diagram-badge');
                     badge.innerText = 'Idle';
                     badge.className = 'text-xs bg-slate-700 px-2 py-0.5 rounded text-slate-400';
