@@ -29,10 +29,15 @@ TOOL_LABELS = {
     "state_machine": "State Machine Generator",
     "interface_sync": "Interface Sync",
     "aspect_injector": "Aspect Injector",
+    "performance_monitor": "Performance Monitor",
     "unsupported": "Out of scope",
 }
 
-# Shown when the router cannot map a request onto any of the three tools
+# The performance monitor is not a code generator - it is a live dashboard, so the
+# answer to a performance question is a link, not a generated file.
+PERF_DASHBOARD_URL = "https://tools-lime-eight.vercel.app/"
+
+# Shown when the router cannot map a request onto any of the tools
 CAPABILITIES = [
     ("state_machine", "generate a C++ state machine (spec, diagram, code) from a description",
      "An order system that starts in Pending, moves to Paid on PaymentReceived, "
@@ -43,6 +48,9 @@ CAPABILITIES = [
     ("aspect_injector", "inject or remove trace / validate / guard aspects in C++ sources",
      "Add trace and validate logging to every function under test/src/hot, "
      "but skip AlphaEngine.cpp"),
+    ("performance_monitor", "open the live dashboard that watches memory, threads and "
+     "context switches over time",
+     "I want to check whether my trading system leaks memory while it runs"),
 ]
 
 ROUTER_SYSTEM_PROMPT = """You are an intent router for C++ automation tools.
@@ -52,15 +60,19 @@ Tools available:
 1. "state_machine": User wants to create or update a state machine.
 2. "interface_sync": User wants to modify an existing C++ interface header and sync derived classes.
 3. "aspect_injector": User wants to inject or remove aspects.
-4. "unsupported": The request is anything else. These tools only generate and rewrite
-   C++ source code, so use "unsupported" for general questions (weather, news, math),
-   chit-chat, requests about other languages, or any task none of the three tools does.
-   Never force an unrelated request into one of the three tools.
+4. "performance_monitor": User wants to watch or measure runtime behaviour over time -
+   memory growth, thread or handle count, context switches, a suspected leak, or general
+   "is this process healthy while it runs" questions. This tool generates nothing and
+   changes no code: it is a live dashboard, and the answer is a link to it.
+5. "unsupported": The request is anything else. These tools only work on C++ source code
+   and on the running process, so use "unsupported" for general questions (weather, news,
+   math), chit-chat, requests about other languages, or any task none of the tools does.
+   Never force an unrelated request onto one of the tools.
 
 Rules:
 - Output JSON ONLY in this format:
 {
-  "tool": "state_machine" | "interface_sync" | "aspect_injector" | "unsupported",
+  "tool": "state_machine" | "interface_sync" | "aspect_injector" | "performance_monitor" | "unsupported",
   "old_header": "<path to old header if mentioned in description, else null>",
   "src_dir": "<source directory for derived classes if mentioned, else null>",
   "reason": "<one short sentence; required when tool is unsupported, else null>"
@@ -74,9 +86,10 @@ EXIT_ROUTER_UNAVAILABLE = 3
 
 # --- progress reporting -------------------------------------------------------
 # The web dashboard pipes this stdout straight into its log panel and also
-# scrapes two markers out of it, so keep these two line shapes stable:
+# scrapes a few markers out of it, so keep these line shapes stable:
 #   "-> AI selected tool: <tool>"
 #   "-> artifact [<label>]: <path>"     (the path is always last on the line)
+#   "-> dashboard: <url>"               (performance monitor: the whole answer)
 # Plain ASCII only: this output gets captured by consoles that are not UTF-8.
 STEP_TOTAL = 3
 
@@ -112,21 +125,37 @@ def report_artifact(label: str, path) -> None:
 
 def print_capabilities() -> None:
     """Tell the user what this assistant can actually do."""
-    print("\nThis assistant only automates three C++ tasks:", flush=True)
+    print("\nThis assistant only automates these tasks:", flush=True)
     for index, (name, what, example) in enumerate(CAPABILITIES, start=1):
         print(f"  {index}. {name:<16} {what}", flush=True)
         print(f"     example: \"{example}\"", flush=True)
 
 
 def handle_unsupported(description: str, reason: str) -> None:
-    """Answer a request that none of the three tools can serve, changing nothing."""
-    detail(f"reason: {reason or 'the request does not match any of the three C++ tools'}")
+    """Answer a request that none of the tools can serve, changing nothing."""
+    detail(f"reason: {reason or 'the request does not match any of the tools'}")
     print("\nNo tool was run, so nothing was generated or modified.", flush=True)
     print_capabilities()
     print(
-        "\nRephrase the request in terms of one of the three tasks above and try again.",
+        "\nRephrase the request in terms of one of the tasks above and try again.",
         flush=True,
     )
+
+
+def handle_performance_monitor(description: str) -> None:
+    """Answer a performance question with the live dashboard.
+
+    There is nothing to generate here: the monitor samples the running process and is
+    driven from its own web UI, so the whole answer is the link. Which process and which
+    metrics to watch is chosen in the dashboard itself.
+    """
+    step(2, "Performance monitoring needs no code generation - it is a live dashboard.")
+    detail(f"dashboard: {PERF_DASHBOARD_URL}")
+    bullet("pick the process and the metrics to watch in the dashboard itself")
+    bullet("memory, thread count, handle count and context switches are sampled over time")
+    bullet("a leak is flagged by regression over the trend, not by a fixed threshold")
+
+    step(3, "Nothing was generated or modified: the dashboard reads the running system.")
 
 
 def route_intent(description: str) -> dict:
@@ -467,6 +496,8 @@ def main():
         handle_interface_sync(args.description, intent, args, should_run)
     elif tool == "aspect_injector":
         handle_aspect_injector(args.description, args.output, should_run)
+    elif tool == "performance_monitor":
+        handle_performance_monitor(args.description)
     else:
         # "unsupported", or a tool name we do not know: never guess, never touch files
         handle_unsupported(args.description, intent.get("reason"))

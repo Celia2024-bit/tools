@@ -53,12 +53,17 @@ DEFAULT_PROMPTS = {
         "OnConnected, add OnError(int err_code), change OnData(int id, double "
         "timestamp). Sync all derived classes under sync_interface/test/src"
     ),
+    "monitor": (
+        "I want to check whether my trading system leaks memory and grows its "
+        "thread count while it keeps running."
+    ),
 }
 
 # Markers printed by nl_dev_tool.py (see its "progress reporting" section)
 TOOL_MARKER = re.compile(r"AI selected tool:\s*([a-z_]+)")
 ARTIFACT_MARKER = re.compile(r"artifact \[[^\]]*\]:\s*(.+?)\s*$", re.MULTILINE)
 REASON_MARKER = re.compile(r"^\s*->\s*reason:\s*(.+?)\s*$", re.MULTILINE)
+DASHBOARD_MARKER = re.compile(r"^\s*->\s*dashboard:\s*(\S+)\s*$", re.MULTILINE)
 
 # Exit codes nl_dev_tool.py uses to separate "not my job" from "it broke"
 EXIT_UNSUPPORTED = 2
@@ -268,6 +273,8 @@ def exec_tool():
         match = TOOL_MARKER.search(logs)
         tool_detected = match.group(1) if match else None
         reason_match = REASON_MARKER.search(logs)
+        # The performance monitor answers with a dashboard link instead of files
+        dashboard_match = DASHBOARD_MARKER.search(logs)
 
         # A request none of the three tools serves is a normal answer, not a failure
         if res.returncode == 0:
@@ -285,6 +292,7 @@ def exec_tool():
             "tool": tool,
             "tool_detected": tool_detected,
             "reason": reason_match.group(1) if reason_match else None,
+            "dashboard": dashboard_match.group(1) if dashboard_match else None,
             "returncode": res.returncode,
             "command": " ".join([Path(cmd[0]).name] + cmd[1:]),
             "logs": logs,

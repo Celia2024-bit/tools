@@ -70,9 +70,13 @@ python aspect_injector.py --config config.json</code></pre>
           OnError(int err_code). Sync every derived class under test/src.</div>
         <div class="ai-prompt">Add trace and validate logging to every function under
           test/src/hot, but skip AlphaEngine.cpp.</div>
+        <div class="ai-prompt">I want to check whether my trading system leaks memory while it
+          keeps running.</div>
         <p class="ai-arrow">
-          The router reads the intent, picks one of the three tools, generates the spec or config
-          that tool expects, runs the pipeline, and hands back the generated files and a diff.
+          The router reads the intent, picks the tool, generates the spec or config that tool
+          expects, runs the pipeline, and hands back the generated files and a diff. The
+          performance monitor is the exception: it generates nothing, so the answer is a link
+          straight to its live dashboard.
         </p>
       </div>
 
