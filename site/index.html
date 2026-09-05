@@ -101,7 +101,7 @@
 
   </section>
 
-  <section class="index-note">
+  <section class="index-note" style="margin-bottom: 46px;">
     <p>
       <strong>How to read these pages.</strong> Each tool has its own page with its own accent colour,
       and each one is self-contained — the config format, the exact commands, what the output looks
@@ -109,6 +109,130 @@
       documented straight from their <code>README</code>; the performance monitor page tells the story
       of why it exists, and links to a live dashboard you can open right now.
     </p>
+  </section>
+
+  <section class="ai-section" id="ai">
+
+    <div class="eyebrow">Live · one prompt · no setup</div>
+    <h2>So how do you actually use these tools?</h2>
+    <p class="lede">
+      Until recently the honest answer was: read the README, then prepare the inputs by hand.
+      A Markdown transition table for the state machine. An old header and a new header for
+      interface sync. A JSON rule file for the injector. Then run the right script, in the right
+      order, with the right paths. <strong>None of that is necessary any more.</strong>
+      Describe what you want in plain English and the AI writes those inputs and drives the tools
+      for you. What you do is type one sentence.
+    </p>
+
+    <div class="split">
+
+      <div class="code">
+        <div class="code-head"><span class="dot"></span>before — you prepare everything</div>
+<pre><code><b class="c"># author state_machine.md yourself, then run three stages</b>
+python3 table_to_json.py state_machine.md
+python3 json_to_cpp.py ./out/state_machine.json
+python3 json_to_mermaid.py ./out/state_machine.json
+
+<b class="c"># write the new interface header yourself, then diff it</b>
+python3 interface_sync.py \
+    --old test/include/IObserver_old.h \
+    --new test/include/IObserver.h \
+    --src test/src
+
+<b class="c"># hand-write config.json: rules, directories, excludes</b>
+python aspect_injector.py --config config.json</code></pre>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">After — you say what you want</div>
+        <div class="ai-prompt">An order system that starts in Pending, moves to Paid on
+          PaymentReceived, then to Completed on OrderDelivered.</div>
+        <div class="ai-prompt">Update IObserver_old.h: remove OnConnected, add
+          OnError(int err_code). Sync every derived class under test/src.</div>
+        <div class="ai-prompt">Add trace and validate logging to every function under
+          test/src/hot, but skip AlphaEngine.cpp.</div>
+        <p class="ai-arrow">
+          The router reads the intent, picks one of the three tools, generates the spec or config
+          that tool expects, runs the pipeline, and hands back the generated files and a diff.
+        </p>
+      </div>
+
+    </div>
+
+    <div class="ai-points">
+
+      <div class="ai-point">
+        <div class="ai-point-title">One entrance, not four</div>
+        <p>
+          No need to know which script does what, that three of them run in sequence, or which
+          flags each one takes. <strong>The request picks the tool</strong>, not you.
+        </p>
+      </div>
+
+      <div class="ai-point">
+        <div class="ai-point-title">No input format to learn</div>
+        <p>
+          The Markdown spec and the JSON config are still produced — you can read them, keep them,
+          edit them by hand. You just <strong>no longer have to author them</strong> to get started.
+        </p>
+      </div>
+
+      <div class="ai-point">
+        <div class="ai-point-title">The model never edits your code</div>
+        <p>
+          It only turns English into a specification. Every actual edit is still made by the
+          deterministic pipeline — libclang for the AST, Jinja2 for the code.
+          <strong>Intent from the model, correctness from the tools.</strong>
+        </p>
+      </div>
+
+      <div class="ai-point">
+        <div class="ai-point-title">Visible and reversible</div>
+        <p>
+          Every generated file is listed and every edit is shown as a unified diff, so you review
+          the change instead of trusting it. <strong>One button puts the tree back</strong> the way
+          it was.
+        </p>
+      </div>
+
+      <div class="ai-point">
+        <div class="ai-point-title">Out of scope stays out of scope</div>
+        <p>
+          Ask it about the weather and it says so, and touches nothing. A request is
+          <strong>never forced onto a tool</strong> that was not built for it.
+        </p>
+      </div>
+
+      <div class="ai-point">
+        <div class="ai-point-title">Nothing to install</div>
+        <p>
+          No Python, no libclang build, no <code>LIBCLANG_PATH</code>, no template directory.
+          It all runs in a container — <strong>you only need a browser</strong>.
+        </p>
+      </div>
+
+    </div>
+
+    <div class="ai-embed no-print">
+      <div class="ai-embed-bar">
+        <span>AI console · live</span>
+        <a href="ai/index.html" target="_blank" rel="noopener">Open in a new tab ↗</a>
+      </div>
+      <!-- Same origin as this page, so a relative path works both on GitHub Pages
+           (/tools/ai/) and in a local preview. -->
+      <iframe src="ai/index.html" title="AI console for the C++ tools" loading="lazy"></iframe>
+    </div>
+
+    <div class="callout warn">
+      <div class="callout-label">Before you press Run</div>
+      <p>
+        This is a shared public sandbox on free hosting. The backend sleeps when nobody is using
+        it, so the first request can take about a minute to wake it up. The AI routing quota is
+        capped per day, and anyone can press <code>Reset workspace</code> — if two people are in
+        here at the same time, they will see each other's changes.
+      </p>
+    </div>
+
   </section>
 
 </main>
