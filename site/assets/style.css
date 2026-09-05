@@ -578,6 +578,51 @@ tbody td code { white-space: nowrap; }
 .ai-point p { margin: 0; color: var(--text-dim); font-size: 14.5px; }
 .ai-point strong { color: #fff; font-weight: 620; }
 
+/* recorded runs: the reliable way to see the tools work, since the live console
+   depends on a free-tier model that can be slow or out of quota */
+.demos {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px 26px;
+  margin: 6px 0 40px;
+}
+.demo {
+  margin: 0;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.demo video {
+  display: block;
+  width: 100%;
+  background: #05070b;
+  border-bottom: 1px solid var(--line-soft);
+}
+.demo figcaption { padding: 13px 16px 16px; }
+.demo-tool {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: .04em;
+  color: var(--accent);
+  margin-bottom: 9px;
+}
+.demo figcaption p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.demo figcaption b { color: #fff; font-weight: 620; }
+/* the closing "out of scope" run reads better wide, with the text beside it */
+.demo.wide { grid-column: 1 / -1; display: flex; align-items: stretch; }
+.demo.wide video {
+  width: 52%;
+  border-bottom: 0;
+  border-right: 1px solid var(--line-soft);
+}
+.demo.wide figcaption { flex: 1; align-self: center; padding: 16px 20px; }
+
 .ai-embed {
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -804,6 +849,14 @@ tbody td code { white-space: nowrap; }
     padding: 14px 6px 10px;
   }
   .toc a.sub { display: none; }
+  /* one demo per row - two 1200px-wide screen recordings side by side stop being readable */
+  .demos { grid-template-columns: minmax(0, 1fr); }
+  .demo.wide { display: block; }
+  .demo.wide video {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
 }
 
 @media (max-width: 620px) {
@@ -839,7 +892,8 @@ tbody td code { white-space: nowrap; }
   .eyebrow,      /* 👈 隐藏顶部标签 */
   .tags,         /* 👈 隐藏顶部标签 */
   .badges,       /* 👈 隐藏顶部标签 */
-  
+  .demo video,   /* a screen recording is dead weight on paper - keep its caption */
+
   button {
     display: none !important;
   }

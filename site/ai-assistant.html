@@ -138,8 +138,96 @@ python aspect_injector.py --config config.json</code></pre>
 
     </div>
 
-    <h2 id="try">Try it</h2>
+    <h2 id="demos">See it work</h2>
+    <p>
+      Five runs, recorded end to end — one sentence in, generated files and a diff out.
+      Nothing is sped up or cut except the waiting.
+    </p>
 
+    <div class="demos">
+
+      <figure class="demo">
+        <video src="images/aspect_inject.mp4" controls muted loop playsinline
+               preload="metadata"></video>
+        <figcaption>
+          <div class="demo-tool">Aspect Injector</div>
+          <div class="ai-prompt">Add trace and validate logging to every function under
+            aspect_injector/test/src, but skip AlphaEngine.cpp</div>
+          <p>
+            The <code>config.json</code> nobody wants to write is written for you —
+            <code>inject_type: ["trace", "validate"]</code> plus an <code>exclude</code>
+            entry for AlphaEngine.cpp. libclang then rewrites 13 files, <b>+243</b> lines,
+            every one of them shown as a diff.
+          </p>
+        </figcaption>
+      </figure>
+
+      <figure class="demo">
+        <video src="images/StateMachine.mp4" controls muted loop playsinline
+               preload="metadata"></video>
+        <figcaption>
+          <div class="demo-tool">State Machine</div>
+          <div class="ai-prompt">An order system that starts in Pending, moves to Paid on
+            PaymentReceived, then to Completed on OrderDelivered.</div>
+          <p>
+            One sentence becomes the Markdown transition table, then
+            <code>state_machine.json</code>, then the C++ itself:
+            <code>OrderStateMachine</code>, <code>OrderHandler</code> with its guard and
+            action stubs, <code>event.h</code>, <code>main.cpp</code> — plus an HTML table
+            and a Mermaid diagram rendered right in the panel.
+          </p>
+        </figcaption>
+      </figure>
+
+      <figure class="demo">
+        <video src="images/interface_syn.mp4" controls muted loop playsinline
+               preload="metadata"></video>
+        <figcaption>
+          <div class="demo-tool">Interface Sync</div>
+          <div class="ai-prompt">Remove OnConnected, add OnError(int err_code), change
+            OnData(int id, double timestamp). Sync every derived class.</div>
+          <p>
+            It rewrites <code>IObserver.h</code> first, then walks every implementation:
+            5 files, <b>+20 −10</b>. Note what it does with the removed method — it drops
+            the <code>override</code> instead of deleting your code, so nothing you wrote
+            disappears behind your back.
+          </p>
+        </figcaption>
+      </figure>
+
+      <figure class="demo">
+        <video src="images/Performance.mp4" controls muted loop playsinline
+               preload="metadata"></video>
+        <figcaption>
+          <div class="demo-tool">Performance Monitor</div>
+          <div class="ai-prompt">I want to check whether my trading system leaks memory
+            and grows its thread count while it keeps running.</div>
+          <p>
+            Nothing is generated and no file is touched. The router recognises a
+            performance question and answers with the link, which opens the live
+            dashboard — which process and which metrics to watch is chosen there.
+          </p>
+        </figcaption>
+      </figure>
+
+      <figure class="demo wide">
+        <video src="images/Unsported_tool.mp4" controls muted loop playsinline
+               preload="metadata"></video>
+        <figcaption>
+          <div class="demo-tool">And when it is not their job</div>
+          <div class="ai-prompt">What's the weather</div>
+          <p>
+            <b>out of scope — nothing ran.</b> Changed files: 0. It says why it refused,
+            lists the tasks it does automate, and asks you to rephrase. A request is never
+            forced onto a tool that was not built for it — which is the whole reason the
+            router is allowed to write code at all.
+          </p>
+        </figcaption>
+      </figure>
+
+    </div>
+
+    <h2 id="try">Try it yourself</h2>
     <div class="ai-embed no-print">
       <div class="ai-embed-bar">
         <span>AI console · live</span>
