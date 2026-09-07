@@ -9,4 +9,3 @@ public:
     void OnConnected() override;
     void OnData(int id) override;
 };
-``
