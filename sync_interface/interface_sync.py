@@ -91,6 +91,22 @@ def extract_interface(
                 [
                     arg.type.spelling
                     for arg in node.get_arguments()
+                ],
+
+            #
+            # Kept separate from "params" on purpose: "params" (types only)
+            # is what compare_interfaces() diffs to decide whether a
+            # signature changed, and a parameter name is not part of a C++
+            # signature — "OnData(int id)" and "OnData(int x)" are the same
+            # override. Folding names in there would make a purely cosmetic
+            # rename look like a breaking change. This field exists only so
+            # build_cpp_stub() can write a readable stub; a header that
+            # doesn't name a parameter leaves the matching entry as "".
+            #
+            "param_names":
+                [
+                    arg.spelling
+                    for arg in node.get_arguments()
                 ]
         }
 
@@ -349,15 +365,24 @@ def find_cpp_for_header(header_path):
 def has_cpp_implementation(
     tu,
     class_name,
-    method_name
+    method_name,
+    param_types
 ):
     """
-    True if class_name::method_name is already *defined* (not just declared)
-    somewhere in this translation unit.
+    True if class_name::method_name(param_types...) — this exact overload,
+    not just any method with this name — is already *defined* somewhere in
+    this translation unit.
 
     Definition, not declaration: a stub only needs adding once, and checking
     is_definition() is what stops a second run from writing the same empty
     body in on top of one a person has since filled in.
+
+    Matching on parameters as well as name is not optional: "OnData(int)"
+    changing to "OnData(int, double)" is still named "OnData" either way, so
+    a name-only check finds the old overload's body and wrongly concludes
+    the new one is already implemented too — the new stub never gets
+    written, and the file is left not actually compiling against the new
+    interface.
     """
 
     for node in tu.cursor.walk_preorder():
@@ -379,6 +404,14 @@ def has_cpp_implementation(
         if parent.spelling != class_name:
             continue
 
+        existing_params = [
+            arg.type.spelling
+            for arg in node.get_arguments()
+        ]
+
+        if existing_params != param_types:
+            continue
+
         return True
 
     return False
@@ -390,18 +423,37 @@ def build_cpp_stub(
 ):
     """
     An empty out-of-line definition for one interface method, in the shape
-    "ReturnType ClassName::Method(Types...) { }" — enough to satisfy the
-    linker, nothing about behaviour. Parameters carry only their types, not
-    names, which is legal C++ and avoids inventing names the person would
-    have to rename anyway once they implement the body.
+    "ReturnType ClassName::Method(Type name, ...) { }" — enough to satisfy
+    the linker, nothing about behaviour.
+
+    Parameter names come from the interface header when it has them ("int
+    err_code" reads a lot better than a bare "int" once someone opens this
+    file to fill it in) and fall back to the bare type when the header
+    itself left a parameter unnamed — never invented.
     """
 
     return_type = item["return"]
     method_name = item["name"]
 
-    params = ", ".join(
-        item["params"]
-    )
+    param_types = item["params"]
+    param_names = item.get("param_names", [])
+
+    parts = []
+
+    for i, param_type in enumerate(param_types):
+
+        name = (
+            param_names[i]
+            if i < len(param_names)
+            else ""
+        )
+
+        if name:
+            parts.append(f"{param_type} {name}")
+        else:
+            parts.append(param_type)
+
+    params = ", ".join(parts)
 
     return [
         f"{return_type} {class_name}::{method_name}({params})\n",
@@ -464,7 +516,8 @@ def sync_cpp_implementation(
         if has_cpp_implementation(
             tu,
             class_name,
-            item["name"]
+            item["name"],
+            item["params"]
         ):
             continue
 
