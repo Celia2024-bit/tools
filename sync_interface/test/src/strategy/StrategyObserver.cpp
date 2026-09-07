@@ -13,3 +13,14 @@ void StrategyObserver::OnData(int id)
 {
     std::printf("[StrategyObserver] Data received, id=%d\n", id);
 }
+
+void StrategyObserver::OnData(int id, double timestamp)
+{
+    // TODO: implement
+}
+
+void StrategyObserver::OnError(int err_code)
+{
+    // TODO: implement
+}
+

@@ -13,3 +13,14 @@ void AlphaObserver::OnData(int id)
 {
     std::printf("[AlphaObserver] Data received, id=%d\n", id);
 }
+
+void AlphaObserver::OnData(int id, double timestamp)
+{
+    // TODO: implement
+}
+
+void AlphaObserver::OnError(int err_code)
+{
+    // TODO: implement
+}
+
