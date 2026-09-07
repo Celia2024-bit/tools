@@ -199,6 +199,35 @@ def contains_derived_class(
     return False
 
 
+def find_derived_class_name(
+    tu,
+    interface_name
+):
+    """
+    The name of the class in this header that derives from interface_name.
+
+    Only used once we already know (via contains_derived_class) that there is
+    one — it exists so the .cpp stub can be qualified as "ClassName::Method",
+    not because the header could plausibly have none.
+    """
+
+    for node in tu.cursor.walk_preorder():
+
+        if (
+            node.kind
+            ==
+            cindex.CursorKind.CLASS_DECL
+        ):
+
+            if is_derived_from(
+                node,
+                interface_name
+            ):
+                return node.spelling
+
+    return None
+
+
 def remove_override_lines(
     lines,
     tu,
@@ -302,6 +331,172 @@ def append_stub(
     return True
 
 
+def find_cpp_for_header(header_path):
+    """
+    The .cpp this header's class is implemented in, by the project's own
+    naming convention: same stem, same directory. None if it doesn't exist —
+    the caller decides what to do about that, this just looks.
+    """
+
+    candidate = header_path.with_suffix(".cpp")
+
+    if candidate.is_file():
+        return candidate
+
+    return None
+
+
+def has_cpp_implementation(
+    tu,
+    class_name,
+    method_name
+):
+    """
+    True if class_name::method_name is already *defined* (not just declared)
+    somewhere in this translation unit.
+
+    Definition, not declaration: a stub only needs adding once, and checking
+    is_definition() is what stops a second run from writing the same empty
+    body in on top of one a person has since filled in.
+    """
+
+    for node in tu.cursor.walk_preorder():
+
+        if node.kind != cindex.CursorKind.CXX_METHOD:
+            continue
+
+        if node.spelling != method_name:
+            continue
+
+        if not node.is_definition():
+            continue
+
+        parent = node.semantic_parent
+
+        if parent is None:
+            continue
+
+        if parent.spelling != class_name:
+            continue
+
+        return True
+
+    return False
+
+
+def build_cpp_stub(
+    class_name,
+    item
+):
+    """
+    An empty out-of-line definition for one interface method, in the shape
+    "ReturnType ClassName::Method(Types...) { }" — enough to satisfy the
+    linker, nothing about behaviour. Parameters carry only their types, not
+    names, which is legal C++ and avoids inventing names the person would
+    have to rename anyway once they implement the body.
+    """
+
+    return_type = item["return"]
+    method_name = item["name"]
+
+    params = ", ".join(
+        item["params"]
+    )
+
+    return [
+        f"{return_type} {class_name}::{method_name}({params})\n",
+        "{\n",
+        "    // TODO: implement\n",
+        "}\n",
+        "\n"
+    ]
+
+
+def sync_cpp_implementation(
+    cpp_file,
+    class_name,
+    changes,
+    clang_args,
+    logger,
+    stats
+):
+    """
+    Append a stub definition for every added or changed interface method that
+    this .cpp doesn't already implement.
+
+    Deleted methods are deliberately absent here: the header keeps the old
+    declaration (minus "override"), so the existing .cpp definition still
+    matches it and still compiles — there is nothing to add or remove on the
+    .cpp side for a deletion, consistent with this tool never deleting a
+    person's own code.
+    """
+
+    if cpp_file is None:
+
+        logger.log(
+            f"   ⚠️  No matching .cpp file for {class_name} — "
+            "skipping implementation stub(s)."
+        )
+
+        return
+
+    index = cindex.Index.create()
+
+    tu = index.parse(
+        str(cpp_file),
+        args=clang_args
+    )
+
+    targets = (
+        [item["new"] for item in changes["changed"]]
+        +
+        changes["added"]
+    )
+
+    lines = cpp_file.read_text(
+        encoding="utf-8"
+    ).splitlines(True)
+
+    added_any = False
+
+    for item in targets:
+
+        if has_cpp_implementation(
+            tu,
+            class_name,
+            item["name"]
+        ):
+            continue
+
+        if lines and lines[-1].strip():
+            lines.append("\n")
+
+        lines.extend(
+            build_cpp_stub(
+                class_name,
+                item
+            )
+        )
+
+        added_any = True
+
+        logger.log(
+            f"   ✨ Added stub implementation: {class_name}::{item['name']}()"
+        )
+
+        stats["cpp_stubs_added"] += 1
+
+    if not added_any:
+        return
+
+    cpp_file.write_text(
+        "".join(lines),
+        encoding="utf-8"
+    )
+
+    stats["cpp_files_modified"] += 1
+
+
 def process_file(
     file_path,
     interface_name,
@@ -323,6 +518,11 @@ def process_file(
         interface_name
     ):
         return
+
+    class_name = find_derived_class_name(
+        tu,
+        interface_name
+    )
 
     stats["derived_classes"] += 1
 
@@ -463,6 +663,27 @@ def process_file(
             "   ✅ No changes required."
         )
 
+    #
+    # Runs independent of whether the header itself changed: a header can
+    # already have "void OnError(int) override;" declared (nothing to touch
+    # there) while the .cpp still has no body for it — those are two
+    # different questions, checked separately.
+    #
+    if changes["changed"] or changes["added"]:
+
+        cpp_file = find_cpp_for_header(
+            Path(file_path)
+        )
+
+        sync_cpp_implementation(
+            cpp_file,
+            class_name,
+            changes,
+            clang_args,
+            logger,
+            stats
+        )
+
 
 def main():
     #
@@ -580,6 +801,12 @@ def main():
             0,
 
         "stubs_added":
+            0,
+
+        "cpp_files_modified":
+            0,
+
+        "cpp_stubs_added":
             0
     }
 
@@ -625,6 +852,14 @@ def main():
 
     logger.log(
         f"Stubs Added       : {stats['stubs_added']}"
+    )
+
+    logger.log(
+        f".cpp Files Synced : {stats['cpp_files_modified']}"
+    )
+
+    logger.log(
+        f".cpp Stubs Added  : {stats['cpp_stubs_added']}"
     )
 
     logger.log()
