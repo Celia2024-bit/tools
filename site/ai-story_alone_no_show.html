@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>From a Black Terminal Window to a Web Page — TradeSystem Tools</title>
+<meta name="description" content="Three C++ tools I'd already built, and the AI layer I put in front of them: one sentence in, the generated files and the diff out.">
+<!-- Standalone: this page is deliberately not linked from any nav. It exists to
+     print a style-consistent PDF of the post. -->
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  /* Page-local, so the shared stylesheet stays untouched. */
+  .post-figure { margin: 30px 0 34px; }
+  .post-figure img {
+    display: block; width: 100%; height: auto;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--bg);
+  }
+  .post-figure figcaption {
+    margin-top: 11px; font-size: 13px; color: var(--text-mute); text-align: center;
+  }
+  .post-figure figcaption b { color: var(--text-dim); font-weight: 620; }
+  .post-lead { font-size: 17.5px; line-height: 1.7; color: var(--text); margin: 0 0 26px; }
+  .post-close {
+    margin-top: 40px; padding-top: 22px; border-top: 1px solid var(--line-soft);
+  }
+  @media print {
+    .post-figure, .post-figure img { page-break-inside: avoid; break-inside: avoid; }
+    .post-figure { margin: 22px 0 26px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">TS</span>
+      TradeSystem Tools
+      <span class="brand-sub">/ developer toolkit</span>
+    </a>
+  </div>
+</header>
+
+<main class="wrap">
+  <article class="story-page">
+
+    <div class="eyebrow">Post draft · not linked from the site · print to PDF</div>
+
+    <h1>From a Black Terminal Window to a Web Page: Putting AI in Front of My C++ Tools</h1>
+
+    <p class="post-lead">
+      I've shared three C++ developer tools here before: <strong>Aspect Injector</strong>
+      (instrumentation inserted straight into function bodies), <strong>Interface Sync</strong>
+      (every derived class updated when an interface changes), and the
+      <strong>State Machine Toolkit</strong> (a Markdown table in, a working C++ state machine out).
+      Each one automates a job I was tired of doing by hand.
+    </p>
+
+    <p class="post-lead">
+      They all worked. What I didn't expect was the new problem they created: every time I came back
+      to one after a few weeks, I had to re-learn how to drive it.
+      <strong>Tools I built to save time weren't saving me much of it.</strong>
+      So I put a single AI layer in front of all three — now I describe what I want in one sentence,
+      and the tools do the rest.
+    </p>
+
+    <div class="project-links" style="margin: 22px 0 30px;">
+      <button onclick="window.print()" class="project-link no-print" style="cursor: pointer;">Export PDF / Print</button>
+    </div>
+
+    <figure class="post-figure">
+      <img src="images/post/fig1-four-tools.png"
+           alt="The four tool cards from the TradeSystem Tools overview page">
+      <figcaption><b>The tools I'd already written about</b> — instrumentation, code generation,
+        refactoring, and the performance monitor.</figcaption>
+    </figure>
+
+    <p>
+      Every time I wanted to use Aspect Injector, I had to remember that <code>config.json</code>
+      takes either <code>inject</code> or <code>remove</code>, never both, and how
+      <code>exclude</code> is structured. For the State Machine tool, I had to recall the exact
+      Markdown table format. For Interface Sync, it was three command-line flags —
+      <code>--old --new --src</code> — and one misplaced space meant starting over.
+      <strong>The more tools I built, the more time I spent remembering <em>how</em> to use them
+      rather than actually using them.</strong>
+    </p>
+
+    <figure class="post-figure">
+      <img src="images/post/fig2-by-hand.png"
+           alt="A shell command and a hand-written config.json">
+      <figcaption><b>This is what I used to write by hand</b> — before running anything.</figcaption>
+    </figure>
+
+    <p>
+      One day, mid-way through fighting with <code>config.json</code> formatting again, it hit me:
+      tables, JSON, header files — these are all just <strong>structured data</strong>. And
+      translating plain language into structured data is exactly what large language models are good
+      at. I didn't want AI writing my actual code logic — I don't trust handing that off — but I
+      could let it translate a sentence into the format each tool expects. The person states intent,
+      the AI writes the format, the deterministic tool makes the actual change. Clean separation,
+      nobody overstepping their role.
+    </p>
+
+    <figure class="post-figure">
+      <img src="images/post/fig3-before-after.png"
+           alt="Left: the commands and files you used to prepare by hand. Right: four one-sentence prompts.">
+      <figcaption><b>By hand, and in plain English</b> — the same three jobs, either way.</figcaption>
+    </figure>
+
+    <p>
+      But a new problem showed up fast: with one entry point serving several tools, how does the AI
+      know which tool a given sentence is even for? I split it into <strong>two AI layers</strong>.
+      The first layer does exactly one job: pick the right tool from a fixed, constrained set of
+      options — an enum, essentially, with no room for it to freelance, because getting this step
+      wrong breaks everything downstream. The second layer does the real work: once a tool is
+      selected, it expands the sentence into that tool's intermediate file — a Markdown table, a
+      <code>config.json</code>, or a new header. The actual code is still generated by the same
+      deterministic pipeline as before — libclang and Jinja2.
+      <strong>The model never touches a line of C++ directly.</strong>
+    </p>
+
+    <figure class="post-figure">
+      <img src="images/post/fig4-two-layers.png"
+           alt="Architecture: one sentence, layer 1 router, layer 2 generator, deterministic pipeline, diff in the browser">
+      <figcaption><b>Two AI layers, and a wall between the model and your code.</b>
+        Anything the router cannot map to a tool, it refuses — nothing runs.</figcaption>
+    </figure>
+
+    <p>
+      Once the pipeline worked end to end, another problem surfaced: I was running all of this from a
+      terminal, so I couldn't actually see what the AI had generated or what the diff looked like —
+      I had to go back into the repo and check file by file. Every run felt uncertain, and when
+      something went wrong, I had no easy way to see where. The whole thing was smart under the hood
+      but still felt like a black box on the surface.
+    </p>
+
+    <p>
+      So I turned it into a web app. One input box, one sentence in — and on the other side, the
+      generated files, the code diff, even the Mermaid flowchart for the state machine, all rendered
+      right there. <strong>Run it, review it, confirm it — all on the same page</strong>, no more
+      switching contexts.
+    </p>
+
+    <figure class="post-figure">
+      <img src="images/post/fig5-results.png"
+           alt="Four screenshots: the injector diff, the rendered state machine, the interface sync diff, and an out-of-scope refusal">
+      <figcaption><b>One sentence in, results on the same page.</b> Bottom right is the one I'm
+        proudest of: asked something out of scope, it refuses and changes nothing.</figcaption>
+    </figure>
+
+    <div class="post-close">
+      <p>
+        The flow now is: one sentence → AI picks the right tool → AI generates the file that tool
+        expects → the original deterministic tool runs it → the diff shows up right there in the
+        browser. <strong>The learning curve is gone, and so is the black box.</strong>
+      </p>
+      <p style="color: var(--text-dim); font-size: 15px;">
+        Demo and full write-up:
+        <a href="https://celia2024-bit.github.io/tools/ai/" target="_blank" rel="noopener">https://celia2024-bit.github.io/tools/ai/</a>
+        · <a href="https://github.com/Celia2024-bit/tools" target="_blank" rel="noopener">source on GitHub</a>
+      </p>
+    </div>
+
+  </article>
+</main>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <span>TradeSystem Tools</span>
+    <span class="sep">·</span>
+    <a href="https://github.com/Celia2024-bit/tools.git" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</footer>
+
+</body>
+</html>
