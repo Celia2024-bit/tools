@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Layer &amp; Web Console — TradeSystem Tools</title>
+<meta name="description" content="How the three C++ tools are driven from one sentence: a Gemini intent router, a strictly-formatted intermediate artifact per tool, a Flask API that diffs whatever changed, and a browser console that shows it.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-tool="ai">
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="index.html">
+      <span class="brand-mark">TS</span>
+      TradeSystem Tools
+      <span class="brand-sub">/ developer toolkit</span>
+    </a>
+    <nav class="topnav">
+      <a href="index.html">Overview</a>
+      <a href="aspect-injector.html">Aspect Injector</a>
+      <a href="state-machine.html">State Machine</a>
+      <a href="interface-sync.html">Interface Sync</a>
+      <a href="performance-monitor.html">Performance Monitor</a>
+      <a href="ai-web-layer.html" aria-current="page">AI Layer</a>
+      <a href="ai-assistant.html">AI Assistant</a>
+
+    </nav>
+  </div>
+</header>
+
+<div class="layout">
+
+  <aside class="toc">
+    <div class="toc-title">On this page</div>
+    <a href="#why">Why a layer at all</a>
+    <a href="#architecture">Architecture</a>
+    <a href="#rules" class="sub">The four rules</a>
+    <a href="#router">The intent router</a>
+    <a href="#contract" class="sub">The JSON contract</a>
+    <a href="#failclosed" class="sub">Failing closed</a>
+    <a href="#retry" class="sub">Rate limits</a>
+    <a href="#handoff">What the model writes</a>
+    <a href="#api">The HTTP API</a>
+    <a href="#exec" class="sub">POST /exec</a>
+    <a href="#markers" class="sub">Marker protocol</a>
+    <a href="#reset" class="sub">POST /reset</a>
+    <a href="#console">The browser console</a>
+    <a href="#run">Running it yourself</a>
+    <a href="#limits">Limits worth knowing</a>
+  </aside>
+
+  <article>
+
+    <div class="eyebrow">Orchestration · Gemini · Flask · browser console</div>
+    <h1>The AI layer and the web console</h1>
+    <p class="lede">
+      Three tools, four scripts, a Markdown spec, a JSON config and a pair of header files — that is
+      what you used to have to know. This layer replaces all of it with one sentence and one browser
+      tab. A Gemini call picks the tool; a second Gemini call writes the <em>one</em> input file that
+      tool already knows how to read; the tool itself runs unchanged. Nothing here makes the tools
+      smarter, and nothing here lets a model edit your code. It is a front door, and it is built to
+      fail closed.
+    </p>
+
+    <div class="project-links" style="margin-bottom: 26px;">
+      <a href="https://github.com/Celia2024-bit/tools/blob/main/nl_dev_tool.py" target="_blank" rel="noopener" class="project-link">nl_dev_tool.py ↗</a>
+      <a href="https://github.com/Celia2024-bit/tools/blob/main/server.py" target="_blank" rel="noopener" class="project-link">server.py ↗</a>
+      <a href="ai-assistant.html" class="project-link">See it run ↗</a>
+      <button onclick="window.print()" class="project-link no-print" style="cursor: pointer;">Export PDF / Print</button>
+    </div>
+
+    <dl class="facts">
+      <div class="fact"><dt>Router model</dt><dd>gemini-3.6-flash</dd></div>
+      <div class="fact"><dt>Model calls per run</dt><dd>2 (route, then generate)</dd></div>
+      <div class="fact"><dt>API</dt><dd>Flask · 2 endpoints</dd></div>
+      <div class="fact"><dt>Frontend</dt><dd>static HTML · no build</dd></div>
+      <div class="fact"><dt>Out of scope</dt><dd>refuses, changes nothing</dd></div>
+    </dl>
+
+    <h2 id="why">Why a layer at all</h2>
+
+    <p>
+      Every one of these tools takes a strictly-formatted input, and authoring that input is the
+      part nobody enjoys. The state machine wants a Markdown table with exact column headers and
+      <code>S000</code>/<code>T001</code> id conventions. The injector wants a
+      <code>config.json</code> where exactly one of <code>inject</code> or <code>remove</code> is
+      present. Interface Sync wants two header files that differ only by the change you meant to
+      make. The tools are reliable; getting to the point where you can run them is the tax.
+    </p>
+
+    <p>
+      A language model is very good at exactly that step and only that step — turning a sentence
+      into a structured file. So that is all it is allowed to do here. The division of labour is the
+      whole design:
+    </p>
+
+    <div class="callout good">
+      <div class="callout-label">The one-line version</div>
+      <p>
+        <strong>Intent comes from the model; correctness comes from the tools.</strong> The model
+        writes an intermediate file. Deterministic code — libclang for the AST, Jinja2 for the
+        templates, <code>g++</code> for the proof — does everything that touches your sources. A bad
+        generation is a bad intermediate file, which you can read, diff and throw away. It is never
+        an unreviewed edit in your tree.
+      </p>
+    </div>
+
+    <h2 id="architecture">Architecture</h2>
+
+    <p>
+      Four hops, and each one is a process boundary you can test on its own. The browser never talks
+      to Gemini, and the model never talks to the filesystem.
+    </p>
+
+    <div class="code">
+      <div class="code-head"><span class="dot"></span>one request, end to end</div>
+<pre><code>  browser  site/ai/index.html          static page, no build step
+     |     POST {prompt}  -->  API_BASE/exec
+     v
+  flask    server.py                   snapshot the watched dirs, then
+     |     subprocess: python nl_dev_tool.py "&lt;prompt&gt;"
+     v
+  router   nl_dev_tool.py              <b class="c">call 1: which tool?  (JSON, 5 options)</b>
+     |
+     +--&gt; state_machine   --&gt; nl_to_state_machine.py   <b class="c">call 2: Markdown spec</b>
+     |                       --&gt; table_to_json.py --&gt; json_to_mermaid.py
+     |                       --&gt; json_to_cpp.py  --&gt; g++ --&gt; run the binary
+     |
+     +--&gt; aspect_injector --&gt; nl_to_aspect_config.py   <b class="c">call 2: config.json</b>
+     |                       --&gt; aspect_injector.py (libclang)
+     |
+     +--&gt; interface_sync  --&gt; nl_to_new_interface.py   <b class="c">call 2: new header</b>
+     |                       --&gt; interface_sync.py
+     |
+     +--&gt; performance_monitor  --&gt; a link. nothing is generated.
+     |
+     +--&gt; unsupported          --&gt; exit 2. nothing ran.
+     v
+  flask    snapshot again --&gt; unified diffs + generated files + scraped markers
+     |     JSON response
+     v
+  browser  summary strip · log · diff panel · artifact panel · Mermaid diagram</code></pre>
+    </div>
+
+    <h3 id="rules">The four rules the layer is built on</h3>
+
+    <ol class="steps">
+      <li>
+        <span class="step-title">The model only ever produces an intermediate artifact</span>
+        A Markdown spec, a JSON config, or a complete header file. Never a patch, never a shell
+        command, never a direct edit. Each artifact is written to disk under its own name and
+        reported, so it survives the run and you can keep it, edit it, or re-run the tool on it by
+        hand.
+      </li>
+      <li>
+        <span class="step-title">The format is pinned to a parser that already existed</span>
+        Each system prompt mirrors the schema of the tool that consumes it — the injector prompt
+        mirrors <code>config.py</code>'s top-level keys, the state machine prompt mirrors the tables
+        <code>table_to_json.py</code> reads. The output is parsed by code, not read by a human, so
+        ambiguity is a bug rather than a style question.
+      </li>
+      <li>
+        <span class="step-title">Anything unrecognised stops the run</span>
+        A reply that is not JSON, or a tool name outside the five known values, becomes
+        <code>unsupported</code> — not a best guess. Nothing is generated and nothing is touched.
+      </li>
+      <li>
+        <span class="step-title">Every effect is shown and reversible</span>
+        The server diffs the tree around the run, so the answer to "what did it do" is a unified
+        diff per file, not a log you have to trust. <code>POST /reset</code> puts the checkout back.
+      </li>
+    </ol>
+
+    <h2 id="router">The intent router</h2>
+
+    <p>
+      <code>nl_dev_tool.py</code> is both the CLI and the thing the web API shells out to — there is
+      no second code path for the browser. Its first job is one cheap Gemini call with minimal
+      thinking and a 200-token ceiling, whose only output is a routing decision:
+    </p>
+
+    <div class="code">
+      <div class="code-head"><span class="dot"></span>shell</div>
+<pre><code>export GEMINI_API_KEY=...
+python nl_dev_tool.py <b class="s">"Add trace and validate logging to every function under
+                      aspect_injector/test/src, but skip AlphaEngine.cpp"</b>
+
+<b class="c"># generate the intermediate artifact but run nothing</b>
+python nl_dev_tool.py <b class="s">"..."</b> --no-run
+
+<b class="c"># paths, when you would rather be explicit than let the router extract them</b>
+python nl_dev_tool.py <b class="s">"..."</b> --old path/to/IObserver_old.h --src path/to/src -o out.json</code></pre>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tool</th><th>Chosen when the request is about</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>state_machine</code></td><td>creating or changing a state machine</td><td>spec, diagram, C++, compiled and run</td></tr>
+          <tr><td><code>interface_sync</code></td><td>changing a C++ interface and its implementations</td><td>new header, then every derived class</td></tr>
+          <tr><td><code>aspect_injector</code></td><td>adding or stripping trace / validate / guard</td><td>rewrites the matched <code>.cpp</code> files</td></tr>
+          <tr><td><code>performance_monitor</code></td><td>runtime behaviour over time — leaks, thread growth</td><td><strong>generates nothing.</strong> Answers with a link</td></tr>
+          <tr><td><code>unsupported</code></td><td>anything else at all</td><td><strong>nothing runs.</strong> Exit code 2</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="contract">The JSON contract</h3>
+
+    <p>
+      The router prompt allows exactly one shape of reply, with no prose and no code fences. Two
+      fields exist only to save you from typing paths twice: if the request mentions a header or a
+      source directory, the model extracts them, and a CLI flag is the fallback rather than the
+      other way round.
+    </p>
+
+    <div class="code">
+      <div class="code-head"><span class="dot"></span>router output</div>
+<pre><code>{
+  <b class="n">"tool"</b>:       <b class="s">"state_machine"</b> | <b class="s">"interface_sync"</b> | <b class="s">"aspect_injector"</b>
+                | <b class="s">"performance_monitor"</b> | <b class="s">"unsupported"</b>,
+  <b class="n">"old_header"</b>: <b class="s">"&lt;path if the request mentions one, else null&gt;"</b>,
+  <b class="n">"src_dir"</b>:    <b class="s">"&lt;derived-class root if mentioned, else null&gt;"</b>,
+  <b class="n">"reason"</b>:     <b class="s">"&lt;one sentence; required when tool is unsupported&gt;"</b>
+}</code></pre>
+    </div>
+
+    <h3 id="failclosed">Failing closed</h3>
+
+    <p>
+      The reply is checked twice. First it has to parse as JSON — a stray fence is stripped, anything
+      else raises immediately. Then the <code>tool</code> value has to be one of the five names the
+      dispatcher knows; an unknown name falls into the same branch as <code>unsupported</code>,
+      which prints why, lists what the assistant does automate, and exits without writing a byte.
+      The refusal is spelled out in the prompt too: <em>never force an unrelated request onto one of
+      the tools</em>. A helpful guess is the failure mode worth designing against, because a
+      confident wrong tool rewrites source files.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Exit code</th><th>Server status</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>0</code></td><td><code>success</code></td><td>the tool ran to completion</td></tr>
+          <tr><td><code>2</code></td><td><code>unsupported</code></td><td>out of scope — a normal answer, not a failure</td></tr>
+          <tr><td><code>3</code></td><td><code>router_unavailable</code></td><td>quota, bad key, service down. Nothing was generated</td></tr>
+          <tr><td>anything else</td><td><code>error</code></td><td>the tool itself failed. The log says where</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Separating those four is what makes the console honest: "I will not do this" and "I broke"
+      render differently, and neither of them is dressed up as a success.
+    </p>
+
+    <h3 id="retry">Rate limits</h3>
+
+    <p>
+      A <code>429</code> from the router is retried up to three times with exponential backoff
+      (5s, then 10s). If it still fails, the run ends with exit code 3 and a one-line message
+      instead of a traceback — the key was bad, or the quota is gone, and either way nothing has
+      been touched.
+    </p>
+
+    <h2 id="handoff">What the model writes, per tool</h2>
+
+    <p>
+      One generation call per run, with a system prompt written against the consumer's schema. Note
+      what is <em>not</em> in this table: no tool receives generated code. They receive a
+      specification, and they generate the code themselves, the same way they did before this layer
+      existed.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Tool</th><th>Generator</th><th>Artifact</th><th>Then handed to</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>state_machine</code></td>
+            <td><code>nl_to_state_machine.py</code></td>
+            <td>Markdown: config, context, state and transition tables, with <code>S000</code> / <code>T001</code> ids and exactly one <code>initial</code> state</td>
+            <td><code>table_to_json.py</code> → <code>json_to_mermaid.py</code> → <code>json_to_cpp.py</code> → <code>g++</code> → run</td>
+          </tr>
+          <tr>
+            <td><code>aspect_injector</code></td>
+            <td><code>nl_to_aspect_config.py</code></td>
+            <td><code>config.json</code>: exactly one of <code>inject</code>/<code>remove</code>, plus optional <code>exclude</code> and <code>include_dirs</code></td>
+            <td><code>aspect_injector.py</code> (libclang AST)</td>
+          </tr>
+          <tr>
+            <td><code>interface_sync</code></td>
+            <td><code>nl_to_new_interface.py</code></td>
+            <td>the complete new header — same include guard, brace style, indentation, virtual destructor, and every method the request did not mention</td>
+            <td><code>interface_sync.py</code> (diff old vs new, walk derived classes)</td>
+          </tr>
+          <tr>
+            <td><code>performance_monitor</code></td>
+            <td>—</td>
+            <td>none. The tool is a live dashboard, so the answer is a URL</td>
+            <td>your browser</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Three details in those prompts are worth copying if you build something similar. Each one
+      exists because of a failure it prevents:
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Prompt rule</th><th>What it prevents</th></tr></thead>
+        <tbody>
+          <tr><td>"Do not invent restrictions the user didn't ask for"</td><td>a helpful extra <code>exclude</code> rule silently narrowing the run</td></tr>
+          <tr><td>"Preserve the file's existing style exactly"</td><td>a correct interface that reformats the whole header and buries the real change</td></tr>
+          <tr><td>"Output ONLY the JSON / the Markdown / the header content"</td><td>a code fence or a friendly sentence reaching a parser that was never written to skip one</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      The generated artifacts also get summarised into the log as the run goes — how many states and
+      transitions the model designed, the <code>+n / −n</code> interface lines it changed, the inject
+      rules it derived. That is what makes the log readable as a decision trail rather than a wall
+      of subprocess output.
+    </p>
+
+    <h2 id="api">The HTTP API</h2>
+
+    <p>
+      <code>server.py</code> is a two-endpoint Flask app with CORS open, so the static site can live
+      anywhere. It adds exactly one thing the CLI does not have: it watches the tree. A snapshot is
+      taken before the run and after it, and the difference is the answer.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Concern</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Watched for diffs</td><td><code>aspect_injector/test</code>, <code>sync_interface/test</code></td></tr>
+          <tr><td>Collected as artifacts</td><td>whatever the log reported, plus <code>state_machine/out</code> and <code>state_machine/output</code></td></tr>
+          <tr><td>Read back as text</td><td>an allowlist of suffixes — sources, headers, <code>.json</code>, <code>.mmd</code>, <code>.md</code>, <code>.html</code>, <code>.log</code>; binaries are skipped</td></tr>
+          <tr><td>Per-file cap</td><td>256 KiB, then <code>truncated: true</code></td></tr>
+          <tr><td>Never walked</td><td><code>__pycache__</code>, <code>.git</code>, <code>node_modules</code></td></tr>
+          <tr><td>Child process</td><td>same interpreter as the server, <code>PYTHONUTF8=1</code>, cwd pinned to the tools directory</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="exec">POST /exec</h3>
+
+    <p>
+      <code>prompt</code> is the whole interface. Everything else is optional, and
+      <code>tool</code> is not a tool selector — it picks one of four canned example prompts, which
+      is what the preset buttons in the console send. A <code>GET</code> on the same path is a health
+      check.
+    </p>
+
+    <div class="code">
+      <div class="code-head"><span class="dot"></span>request</div>
+<pre><code>{
+  <b class="n">"prompt"</b>:  <b class="s">"Update interface sync_interface/test/include/IObserver_old.h: remove
+              OnConnected, add OnError(int err_code). Sync all derived classes
+              under sync_interface/test/src"</b>,
+
+  <b class="c">// optional</b>
+  <b class="n">"tool"</b>:    <b class="s">"sm"</b> | <b class="s">"aspect"</b> | <b class="s">"interface"</b> | <b class="s">"monitor"</b>,  <b class="c">// use a preset prompt instead</b>
+  <b class="n">"old"</b>:     <b class="s">"&lt;old header path&gt;"</b>,   <b class="c">// --old</b>
+  <b class="n">"src"</b>:     <b class="s">"&lt;derived class root&gt;"</b>, <b class="c">// --src</b>
+  <b class="n">"output"</b>:  <b class="s">"&lt;artifact path&gt;"</b>,     <b class="c">// -o</b>
+  <b class="n">"no_run"</b>:  <b class="k">true</b>                     <b class="c">// generate the artifact, run nothing</b>
+}</code></pre>
+    </div>
+
+    <div class="code">
+      <div class="code-head"><span class="dot"></span>response</div>
+<pre><code>{
+  <b class="n">"status"</b>:        <b class="s">"success"</b> | <b class="s">"unsupported"</b> | <b class="s">"router_unavailable"</b> | <b class="s">"error"</b>,
+  <b class="n">"tool_detected"</b>: <b class="s">"interface_sync"</b>,      <b class="c">// what the router actually picked</b>
+  <b class="n">"reason"</b>:        <b class="k">null</b>,                  <b class="c">// filled in when it refused</b>
+  <b class="n">"dashboard"</b>:     <b class="k">null</b>,                  <b class="c">// the whole answer, for the monitor</b>
+  <b class="n">"returncode"</b>:    0,
+  <b class="n">"command"</b>:       <b class="s">"python nl_dev_tool.py ..."</b>,
+  <b class="n">"logs"</b>:          <b class="s">"&lt;stdout + stderr, verbatim&gt;"</b>,
+
+  <b class="n">"diffs"</b>: [ { <b class="n">"path"</b>, <b class="n">"name"</b>, <b class="n">"status"</b>: <b class="s">"added"</b>|<b class="s">"modified"</b>|<b class="s">"deleted"</b>,
+              <b class="n">"additions"</b>, <b class="n">"deletions"</b>, <b class="n">"diff"</b>: <b class="s">"&lt;unified diff&gt;"</b> } ],
+  <b class="n">"diff_summary"</b>: { <b class="n">"files"</b>: 5, <b class="n">"additions"</b>: 20, <b class="n">"deletions"</b>: 10 },
+
+  <b class="n">"artifacts"</b>: [ { <b class="n">"path"</b>, <b class="n">"name"</b>, <b class="n">"ext"</b>, <b class="n">"size"</b>, <b class="n">"lines"</b>,
+                  <b class="n">"truncated"</b>, <b class="n">"content"</b> } ],
+  <b class="n">"mermaid"</b>: <b class="s">"&lt;diagram source, state machine runs only&gt;"</b>
+}</code></pre>
+    </div>
+
+    <p>
+      Biggest diffs come first, so the file the run actually cared about is at the top of the panel
+      rather than alphabetically wherever. For a state machine run the server resolves the
+      <code>.mmd</code> that <em>this</em> run produced by matching the spec it reported — the
+      <code>out/</code> directory still holds diagrams from earlier runs, and showing yesterday's
+      diagram for today's request would be worse than showing none.
+    </p>
+
+    <h3 id="markers">The marker protocol</h3>
+
+    <p>
+      The server learns what happened by reading the child's stdout. That makes these four line
+      shapes an interface, not logging — they are ASCII-only, the path or URL is always last on the
+      line, and changing them breaks the web page while the CLI keeps working, which is the kind of
+      break that takes an afternoon to find. They are documented in both files for that reason.
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Line</th><th>Read as</th></tr></thead>
+        <tbody>
+          <tr><td><code>-&gt; AI selected tool: &lt;tool&gt;</code></td><td><code>tool_detected</code>, and which artifact dirs to collect</td></tr>
+          <tr><td><code>-&gt; reason: &lt;text&gt;</code></td><td><code>reason</code> — why it refused</td></tr>
+          <tr><td><code>-&gt; artifact [&lt;label&gt;]: &lt;path&gt;</code></td><td>a generated file to read back into <code>artifacts</code></td></tr>
+          <tr><td><code>-&gt; dashboard: &lt;url&gt;</code></td><td><code>dashboard</code> — the monitor's entire answer</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 id="reset">POST /reset</h3>
+
+    <p>
+      The injector and Interface Sync rewrite their own test sources <em>in place</em>. In a
+      long-lived container the second run therefore no longer starts from the committed baseline,
+      and a demo that quietly stacks edits on edits is a demo that stops making sense. This endpoint
+      runs <code>git restore .</code> in the checkout and reports what it did: which tracked files
+      were restored, which untracked paths (generated output, logs) were deliberately left alone,
+      and — if any — which files are somehow still modified.
+    </p>
+
+    <div class="callout warn">
+      <div class="callout-label">This one really does discard work</div>
+      <p>
+        <code>git restore .</code> throws away every uncommitted edit to a tracked file in that
+        checkout, not only the ones a tool made. It belongs to a throwaway demo container. The
+        console asks for confirmation before calling it; that is the only thing standing in front of
+        it, because the endpoint itself is unauthenticated.
+      </p>
+    </div>
+
+    <h2 id="console">The browser console</h2>
+
+    <p>
+      <code>site/ai/index.html</code> is one static file — Tailwind and Mermaid from a CDN, no build
+      step, no framework, no state beyond the last response. It is embedded in the
+      <a href="ai-assistant.html">AI Assistant page</a> and also opens on its own. What it renders
+      is shaped entirely by which of the four statuses came back:
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Panel</th><th>Shows</th></tr></thead>
+        <tbody>
+          <tr><td>Prompt bar</td><td>the textarea, four preset buttons kept in sync with the server's presets, and Reset workspace</td></tr>
+          <tr><td>Summary strip</td><td>which tool the router picked, the status badge, changed files, <code>+/−</code> lines, generated file count, the exact command</td></tr>
+          <tr><td>Log</td><td>stdout and stderr verbatim — the same text you would see in a terminal</td></tr>
+          <tr><td>Diagram</td><td>Mermaid, rendered. Absent from the layout entirely unless a diagram was produced, so the log takes the full width</td></tr>
+          <tr><td>Generated files</td><td>collapsed per file, filterable, with copy, HTML preview, and re-render for any <code>.mmd</code></td></tr>
+          <tr><td>File changes</td><td>collapsed per file, coloured unified diff, copy-the-whole-patch</td></tr>
+          <tr><td>Dashboard banner</td><td>only for the monitor: says plainly that nothing was generated, and links out</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      Two small decisions carry most of the page's weight. Both panels are <strong>collapsed by
+      default</strong> — a run that rewrites 13 files would otherwise bury its own summary. And a
+      refusal is rendered as its own amber badge, <em>out of scope — nothing ran</em>, with
+      <code>Changed files: 0</code> beside it, because the most important thing a tool that edits
+      code can tell you is that it did not.
+    </p>
+
+    <h2 id="run">Running it yourself</h2>
+
+    <p>
+      The container exists because the dependency list is the real barrier: libclang, a matching
+      <code>clang</code> Python binding, a C++ compiler, and the sibling <code>util</code> repo the
+      injected code includes. None of that is worth installing to try a tool once.
+    </p>
+
+    <div class="code">
+      <div class="code-head"><span class="dot"></span>shell</div>
+<pre><code><b class="c"># container: g++, libclang, both repos, every Python dependency</b>
+docker build -t cpp-dev-tools:v2 .
+docker run -p 8000:8000 -e GEMINI_API_KEY=... cpp-dev-tools:v2
+
+<b class="c"># or locally, if you already have libclang and g++</b>
+pip install flask flask-cors google-genai jinja2 clang==14.0.6
+export GEMINI_API_KEY=...
+python server.py                <b class="c"># binds 0.0.0.0:8000</b></code></pre>
+    </div>
+
+    <p>
+      Then point the console at it — one constant at the top of the script in
+      <code>site/ai/index.html</code>:
+    </p>
+
+    <div class="code">
+      <div class="code-head"><span class="dot"></span>site/ai/index.html</div>
+<pre><code><b class="k">const</b> API_BASE = <b class="s">'http://localhost:8000'</b>;   <b class="c">// or your deployed URL</b></code></pre>
+    </div>
+
+    <p>
+      The frontend is static, so it can be served by GitHub Pages, Vercel, or
+      <code>python -m http.server</code> while the API runs somewhere else entirely — which is how
+      the live version is deployed. The Dockerfile also patches one line of the
+      <code>clang</code> binding so an unknown <code>CursorKind</code> from a newer standard library
+      degrades to <code>UNEXPOSED_DECL</code> instead of raising; without it, parsing some headers
+      simply stops.
+    </p>
+
+    <h2 id="limits">Limits worth knowing</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Limit</th><th>What it means in practice</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>No authentication</td>
+            <td><code>/exec</code> runs code generation and <code>/reset</code> runs
+                <code>git restore</code>, both unauthenticated. This is a demo service in a
+                disposable container. Do not point it at a checkout you care about, and do not
+                expose it without putting something in front of it</td>
+          </tr>
+          <tr>
+            <td>Diffs only cover the watched directories</td>
+            <td>a request aimed outside <code>aspect_injector/test</code> or
+                <code>sync_interface/test</code> still runs and still edits files — the page just
+                will not show you the diff. Widen <code>WATCH_DIRS</code> before pointing it
+                anywhere new</td>
+          </tr>
+          <tr>
+            <td>One run at a time</td>
+            <td>the request is held open for the whole pipeline, compiler included. Two people
+                clicking Run at once share one working tree, and on a free tier the first request
+                after a sleep also pays the cold start</td>
+          </tr>
+          <tr>
+            <td>Two model calls per run</td>
+            <td>routing and generation are separate calls against the same quota. The router retries
+                a 429; the generator does not</td>
+          </tr>
+          <tr>
+            <td>The key comes from the environment</td>
+            <td><code>server.py</code> falls back to a placeholder string when
+                <code>GEMINI_API_KEY</code> is unset, so a missing key surfaces as
+                <code>router_unavailable</code> rather than a crash. Set it properly; never commit a
+                real one in its place</td>
+          </tr>
+          <tr>
+            <td>Artifacts are text and capped</td>
+            <td>256 KiB per file, allowlisted suffixes only. A compiled binary is produced and run,
+                but never shipped to the browser</td>
+          </tr>
+          <tr>
+            <td>A generated state machine is compiled, not verified</td>
+            <td><code>g++</code> proves it builds and the binary runs. Whether the states and
+                transitions are the ones you meant is still yours to read — which is exactly why the
+                Markdown spec and the Mermaid diagram are put in front of you</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <div class="callout-label">Where to look next</div>
+      <p>
+        <a href="ai-assistant.html">The AI Assistant page</a> has five recorded runs — one per tool,
+        plus one refusal — and the live console embedded at the bottom. The three tool pages
+        (<a href="aspect-injector.html">injector</a>,
+        <a href="state-machine.html">state machine</a>,
+        <a href="interface-sync.html">interface sync</a>) document the input formats this layer
+        writes for you, which is what to read when you want to edit a generated artifact by hand
+        instead of re-prompting.
+      </p>
+    </div>
+
+    <nav class="pager">
+      <a href="ai-assistant.html">← AI Assistant</a>
+      <a href="index.html">Overview →</a>
+    </nav>
+
+  </article>
+</div>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <span>TradeSystem Tools</span>
+    <span class="sep">·</span>
+    <a href="https://github.com/Celia2024-bit/tools.git" target="_blank" rel="noopener">GitHub</a>
+    <span class="sep">·</span>
+    <a href="ai/index.html">AI console</a>
+    <span class="sep">·</span>
+    <a href="index.html">All tools</a>
+  </div>
+</footer>
+
+</body>
+</html>

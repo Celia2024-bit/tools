@@ -40,6 +40,7 @@ body[data-tool="aspect"]     { --accent: #fbbf24; --accent-soft: rgba(251,191,36
 body[data-tool="state"]     { --accent: #c084fc; --accent-soft: rgba(192,132,252,.12); --accent-line: rgba(192,132,252,.34); }
 body[data-tool="sync"]      { --accent: #38d6d6; --accent-soft: rgba(56,214,214,.12);  --accent-line: rgba(56,214,214,.34); }
 body[data-tool="monitor"]   { --accent: #4ade80; --accent-soft: rgba(74,222,128,.12);  --accent-line: rgba(74,222,128,.34); }
+body[data-tool="ai"]        { --accent: #f472b6; --accent-soft: rgba(244,114,182,.12); --accent-line: rgba(244,114,182,.34); }
 
 * { box-sizing: border-box; }
 
@@ -241,6 +242,7 @@ code {
 body[data-tool="state"]   code { color: #e6d3fb; }
 body[data-tool="sync"]    code { color: #c8eeee; }
 body[data-tool="monitor"] code { color: #cdf0d8; }
+body[data-tool="ai"]      code { color: #f8d4e6; }
 
 .code {
   position: relative;
